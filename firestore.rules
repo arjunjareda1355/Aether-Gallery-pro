@@ -1,0 +1,181 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && 
+             (request.auth.token.email == 'arjunjareda2007@gmail.com' || 
+              request.auth.token.email == 'arjunjareda1355@gmail.com');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Entity Validations
+    function isValidImage(data) {
+      return data.url is string && data.url.size() < 1000 &&
+             data.thumbnailUrl is string && data.thumbnailUrl.size() < 1000 &&
+             data.type is string && data.type in ['image', 'video'] &&
+             data.title is string && data.title.size() <= 200 &&
+             data.description is string && data.description.size() <= 2000 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.tags is list && data.tags.size() <= 30 &&
+             data.likes is int &&
+             (data.isPremium == null || data.isPremium is bool) &&
+             (data.isSample == null || data.isSample is bool) &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidUser(data) {
+      return data.email is string &&
+             (data.isPremium == null || data.isPremium is bool) &&
+             (data.isPremiumPending == null || data.isPremiumPending is bool) &&
+             (data.subscriptionPlan == null || data.subscriptionPlan is string) &&
+             (data.displayName == null || data.displayName is string) &&
+             (data.lastSeen == null || data.lastSeen is timestamp);
+    }
+
+    function isValidPaymentRequest(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.userEmail is string &&
+             data.plan is string &&
+             data.screenshotUrl is string &&
+             data.status == 'pending' &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.name is string && data.name.size() <= 100 &&
+             data.slug is string && data.slug.size() <= 100;
+    }
+
+    function isValidComment(data) {
+      return data.imageId is string && isValidId(data.imageId) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+             data.userName is string && data.userName.size() <= 100 &&
+             (data.userPhoto == null || (data.userPhoto is string && data.userPhoto.size() < 1000)) &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidCollection(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.imageIds is list && data.imageIds.size() <= 500 &&
+             (data.isPublic == null || data.isPublic is bool) &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidReport(data) {
+      return data.imageId is string && isValidId(data.imageId) &&
+             data.imageUrl is string && data.imageUrl.size() < 1000 &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.type is string && data.type in ['broken', 'inappropriate', 'spam'] &&
+             data.status == 'pending' &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidLike(data) {
+      return data.userId == request.auth.uid &&
+             data.imageId is string;
+    }
+
+    // Images Collection
+    match /images/{imageId} {
+      allow list, get: if true;
+      allow create: if isAdmin() && isValidImage(incoming());
+      allow delete: if isAdmin();
+      allow update: if (
+        isAdmin()
+      ) || (
+        isSignedIn() && 
+        incoming().diff(existing()).affectedKeys().hasOnly(['likes']) &&
+        (incoming().likes == existing().likes + 1 || incoming().likes == existing().likes - 1)
+      );
+    }
+
+    // Categories Collection
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidCategory(incoming());
+    }
+
+    // Comments Collection
+    match /comments/{commentId} {
+      allow list, get: if true;
+      allow create: if isSignedIn() && isValidComment(incoming()) && incoming().timestamp == request.time;
+      allow delete: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+    }
+
+    // Collections
+    match /user_collections/{collectionId} {
+      allow list, get: if existing().isPublic == true || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidCollection(incoming()) && incoming().timestamp == request.time;
+      allow update: if isSignedIn() && existing().userId == request.auth.uid && isValidCollection(incoming());
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // Reports
+    match /reports/{reportId} {
+      allow list, get: if isAdmin();
+      allow create: if isSignedIn() && isValidReport(incoming()) && incoming().timestamp == request.time;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Likes
+    match /likes/{likeId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidLike(incoming());
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // Health check
+    match /_connection_test_/{docId} {
+      allow read, write: if true;
+    }
+
+    // App Settings
+    match /app_settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() || isOwner(userId);
+    }
+
+    // Payments Collection
+    match /payments/{paymentId} {
+      allow get: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isValidPaymentRequest(incoming()) && incoming().timestamp == request.time;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}

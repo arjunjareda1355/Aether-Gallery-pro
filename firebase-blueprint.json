@@ -1,0 +1,106 @@
+{
+  "entities": {
+    "Image": {
+      "title": "Image",
+      "description": "Metadata for an externally hosted image",
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "format": "uri", "description": "External URL of the image" },
+        "title": { "type": "string", "description": "Title of the artwork" },
+        "description": { "type": "string", "description": "Detailed description" },
+        "category": { "type": "string", "description": "The category name this image belongs to" },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Keywords for search" },
+        "likes": { "type": "integer", "description": "Total number of likes" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When it was uploaded" },
+        "userId": { "type": "string", "description": "ID of the admin who uploaded it" },
+        "isPremium": { "type": "boolean", "description": "Whether this asset is premium" },
+        "isSample": { "type": "boolean", "description": "Whether this premium asset is visible to all as a sample" }
+      },
+      "required": ["url", "title", "category", "likes", "timestamp"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile with subscription details",
+      "type": "object",
+      "properties": {
+        "isPremium": { "type": "boolean" },
+        "isPremiumPending": { "type": "boolean" },
+        "subscriptionPlan": { "type": "string", "enum": ["none", "99", "199", "499"] },
+        "lastScreenshotUrl": { "type": "string" },
+        "lastPaymentAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "PaymentRequest": {
+      "title": "Payment Request",
+      "description": "Premium upgrade request for moderation",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "plan": { "type": "string" },
+        "screenshotUrl": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] }
+      },
+      "required": ["userId", "plan", "screenshotUrl", "timestamp", "status"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Image categories for classification",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Display name" },
+        "slug": { "type": "string", "description": "URL-friendly name" }
+      },
+      "required": ["name", "slug"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "User comments on images",
+      "type": "object",
+      "properties": {
+        "imageId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhoto": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["imageId", "userId", "text", "timestamp"]
+    },
+    "Collection": {
+      "title": "Collection",
+      "description": "User created collections of images",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "userId": { "type": "string" },
+        "imageIds": { "type": "array", "items": { "type": "string" } },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "userId", "imageIds", "timestamp"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "User reports for moderation",
+      "type": "object",
+      "properties": {
+        "imageId": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["broken", "inappropriate", "spam"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "actioned", "ignored"] }
+      },
+      "required": ["imageId", "userId", "type", "timestamp", "status"]
+    }
+  },
+  "firestore": {
+    "/images/{imageId}": { "schema": "Image", "description": "Collection of image metadata" },
+    "/categories/{categoryId}": { "schema": "Category", "description": "Collection of gallery categories" },
+    "/comments/{commentId}": { "schema": "Comment", "description": "User comments" },
+    "/collections/{collectionId}": { "schema": "Collection", "description": "User collections" },
+    "/reports/{reportId}": { "schema": "Report", "description": "Moderation reports" },
+    "/users/{userId}": { "schema": "User", "description": "User subscription data" },
+    "/payments/{paymentId}": { "schema": "PaymentRequest", "description": "Premium upgrade requests" }
+  }
+}
