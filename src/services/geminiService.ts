@@ -1,6 +1,23 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
+let aiInstance: GoogleGenAI | null = null;
+
+const getAIClient = (): GoogleGenAI | null => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not defined. AI features will be unavailable.");
+    return null;
+  }
+  if (!aiInstance) {
+    try {
+      aiInstance = new GoogleGenAI({ apiKey });
+    } catch (err) {
+      console.error("Failed to initialize GoogleGenAI client:", err);
+      return null;
+    }
+  }
+  return aiInstance;
+};
 
 export interface AssetAnalysis {
   title: string;
@@ -10,6 +27,12 @@ export interface AssetAnalysis {
 
 export const analyzeAsset = async (assetUrl: string): Promise<AssetAnalysis | null> => {
   try {
+    const ai = getAIClient();
+    if (!ai) {
+      console.warn("Gemini AI client is not initialized because the API key is missing. Skipping analysis.");
+      return null;
+    }
+
     // Fetch asset as base64
     const response = await fetch(assetUrl);
     const blob = await response.blob();

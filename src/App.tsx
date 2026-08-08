@@ -1,4 +1,4 @@
-import { useState, useEffect, MouseEvent } from 'react';
+import { useState, useEffect, MouseEvent, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link as RouterLink } from 'react-router-dom';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { collection, onSnapshot, query, orderBy, addDoc, deleteDoc, doc, updateDoc, increment, getDocs, limit, startAfter, QueryDocumentSnapshot, DocumentData, where, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -42,6 +42,15 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const { ref, inView } = useInView();
 
+  // Keep a stable random weight mapping for images to maintain a consistent random order on latest sort
+  const imageRandomWeightsRef = useRef<Record<string, number>>({});
+  const searchQueryRef = useRef(searchQuery);
+
+  // Sync searchQuery to ref immediately to bypass stale closure on scroll/infinite fetch
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
+
   const BATCH_SIZE = 20;
   const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com']; 
 
@@ -52,7 +61,12 @@ export default function App() {
       if (firebaseUser) {
         const isAdmin = ADMIN_EMAILS.includes(firebaseUser.email || '');
         
-        // Dynamic profile listener
+        // Dynamic profile listener - unsubscribe existing first to prevent multiple listeners
+        if (unsubscribeProfile) {
+          unsubscribeProfile();
+          unsubscribeProfile = undefined;
+        }
+
         unsubscribeProfile = onSnapshot(doc(db, COLLECTIONS.USERS, firebaseUser.uid), (snap) => {
           const profileData = snap.data();
           setUser({
@@ -86,7 +100,10 @@ export default function App() {
       } else {
         setUser(null);
         setLikedImageIds(new Set());
-        if (unsubscribeProfile) unsubscribeProfile();
+        if (unsubscribeProfile) {
+          unsubscribeProfile();
+          unsubscribeProfile = undefined;
+        }
       }
     });
 
@@ -98,6 +115,9 @@ export default function App() {
     return () => {
       unsubscribeAuth();
       unsubscribeCat();
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+      }
     };
   }, []);
 
@@ -142,9 +162,14 @@ export default function App() {
     const unsubscribeImg = onSnapshot(qImg, (snapshot) => {
       let docs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Image));
       
-      // If default/latest sort, apply a random shuffle to keep the gallery fresh
-      if (sortOrder === 'latest' && activeCategory === 'all' && !searchQuery) {
-        docs = [...docs].sort(() => Math.random() - 0.5);
+      // If default/latest sort, apply stable random shuffle using stable weights
+      if (sortOrder === 'latest' && activeCategory === 'all' && !searchQueryRef.current) {
+        docs.forEach(doc => {
+          if (imageRandomWeightsRef.current[doc.id] === undefined) {
+            imageRandomWeightsRef.current[doc.id] = Math.random();
+          }
+        });
+        docs = [...docs].sort((a, b) => imageRandomWeightsRef.current[a.id] - imageRandomWeightsRef.current[b.id]);
       }
 
       setImages(docs);
@@ -188,12 +213,22 @@ export default function App() {
       const snapshot = await getDocs(q);
       let newDocs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Image));
       
-      // Keep it random if on default sort
-      if (sortOrder === 'latest' && activeCategory === 'all' && !searchQuery) {
-        newDocs = [...newDocs].sort(() => Math.random() - 0.5);
+      // Keep it random/stable if on default sort
+      if (sortOrder === 'latest' && activeCategory === 'all' && !searchQueryRef.current) {
+        newDocs.forEach(doc => {
+          if (imageRandomWeightsRef.current[doc.id] === undefined) {
+            imageRandomWeightsRef.current[doc.id] = Math.random();
+          }
+        });
+        newDocs = [...newDocs].sort((a, b) => imageRandomWeightsRef.current[a.id] - imageRandomWeightsRef.current[b.id]);
       }
 
-      setImages(prev => [...prev, ...newDocs]);
+      setImages(prev => {
+        // Prevent duplicate images in dynamic streams
+        const prevIds = new Set(prev.map(p => p.id));
+        const filteredNew = newDocs.filter(d => !prevIds.has(d.id));
+        return [...prev, ...filteredNew];
+      });
       setLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
       setHasMore(snapshot.docs.length === BATCH_SIZE);
     } catch (e) {
