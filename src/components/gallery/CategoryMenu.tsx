@@ -56,11 +56,11 @@ export default function CategoryMenu({
   };
 
   return (
-    <div className="flex items-center gap-1.5 p-1 bg-white/5 backdrop-blur-2xl rounded-2xl border border-white/5 shadow-2xl">
+    <div className="flex items-center gap-1.5 p-1 bg-white/5 backdrop-blur-2xl rounded-2xl border border-white/5 shadow-2xl max-w-full overflow-x-auto no-scrollbar scroll-smooth whitespace-nowrap">
       {/* Category Cycler */}
       <button
         onClick={cycleCategory}
-        className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-all group border border-white/5"
+        className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-all group border border-white/5 shrink-0"
       >
         <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white">
           {activeCategory.name}
@@ -68,12 +68,12 @@ export default function CategoryMenu({
         <ChevronRight className="w-3 h-3 text-white/30 group-hover:text-white transition-colors" />
       </button>
 
-      <div className="w-px h-6 bg-white/10 mx-1" />
+      <div className="w-px h-6 bg-white/10 mx-1 shrink-0" />
 
       {/* Sort Cycler */}
       <button
         onClick={cycleSort}
-        className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-all group border border-white/5"
+        className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 transition-all group border border-white/5 shrink-0"
       >
         <SlidersHorizontal className="w-3 h-3 text-white/50 group-hover:text-white transition-colors" />
         <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/70 group-hover:text-white">
@@ -81,12 +81,12 @@ export default function CategoryMenu({
         </span>
       </button>
 
-      <div className="w-px h-6 bg-white/10 mx-1" />
+      <div className="w-px h-6 bg-white/10 mx-1 shrink-0" />
 
       {/* Media Type Filter */}
       <button
         onClick={cycleMediaType}
-        className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-brand-primary/10 hover:bg-brand-primary/20 transition-all group border border-brand-primary/20"
+        className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-brand-primary/10 hover:bg-brand-primary/20 transition-all group border border-brand-primary/20 shrink-0"
       >
         {mediaType === 'video' ? (
           <Play className="w-3 h-3 text-brand-primary fill-brand-primary" />

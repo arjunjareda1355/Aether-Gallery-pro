@@ -26,6 +26,9 @@ export default function CommentSection({ imageId, user }: CommentSectionProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
+    // Reset comments immediately on imageId change to avoid visual lag/leakage of previous image's comments
+    setComments([]);
+
     const q = query(
       collection(db, COLLECTIONS.COMMENTS),
       where('imageId', '==', imageId),

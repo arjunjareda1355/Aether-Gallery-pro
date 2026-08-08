@@ -82,6 +82,7 @@ export default function ImageCard({ image, user, onClick, onLike, onSave, hasLik
           onLoad={() => setIsLoaded(true)}
           onError={(e) => {
             const target = e.target as HTMLImageElement;
+            target.onerror = null;
             target.src = 'https://picsum.photos/seed/broken/800/600?blur=4';
             const parent = target.parentElement;
             if (parent) {

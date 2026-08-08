@@ -37,9 +37,29 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
   const dragX = useMotionValue(0);
   const swipeOpacity = useTransform(dragX, [-100, 0, 100], [0.5, 1, 0.5]);
 
+  // Reset modal state variables when image changes
+  useEffect(() => {
+    if (image) {
+      setZoomLevel(1);
+      setImageError(false);
+      dragX.set(0);
+      setReportTypeOpen(false);
+    }
+  }, [image?.id]);
+
   useEffect(() => {
     const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore navigation keydowns when typing inside interactive fields
+      const activeEl = document.activeElement;
+      if (
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          activeEl.getAttribute('contenteditable') === 'true')
+      ) {
+        return;
+      }
       if (e.key === 'ArrowRight' && hasNext) onNavigate?.('next');
       if (e.key === 'ArrowLeft' && hasPrev) onNavigate?.('prev');
       if (e.key === 'Escape') onClose();
