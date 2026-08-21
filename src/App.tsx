@@ -1,98 +1,394 @@
-import { useState, useEffect, MouseEvent } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link as RouterLink } from 'react-router-dom';
+import { useState, useEffect, MouseEvent, useCallback, useMemo, useTransition, useRef, useDeferredValue, lazy, Suspense } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Link as RouterLink, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
-import { collection, onSnapshot, query, orderBy, addDoc, deleteDoc, doc, updateDoc, increment, getDocs, limit, startAfter, QueryDocumentSnapshot, DocumentData, where, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, addDoc, deleteDoc, doc, updateDoc, increment, getDocs, limit, startAfter, QueryDocumentSnapshot, DocumentData, where, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { useInView } from 'react-intersection-observer';
-import { auth, db, googleProvider, COLLECTIONS, testFirestoreConnection } from './lib/firebase';
+import { auth, db, googleProvider, COLLECTIONS, testFirestoreConnection, handleFirestoreError } from './lib/firebase';
 import { Image, Category, User } from './types';
-import { cn } from './lib/utils';
-import { ArrowLeft } from 'lucide-react';
+import { cn, debounce, copyToClipboard } from './lib/utils';
+import { ArrowLeft, Trash2, Sparkles, Wand2, Search, Check, Folder, Lock, Unlock, Edit3, HelpCircle, X, Download, Share2, AlertTriangle } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 // Components
 import Navbar from './components/layout/Navbar';
 import Logo from './components/layout/Logo';
+import SmartOnboarding from './components/layout/SmartOnboarding';
 import MasonryGrid from './components/gallery/MasonryGrid';
 import CategoryMenu from './components/gallery/CategoryMenu';
 import ImageModal from './components/gallery/ImageModal';
 import UploadForm from './components/admin/UploadForm';
 import CategoryManager from './components/admin/CategoryManager';
 import CollectionModal from './components/gallery/CollectionModal';
-import AboutPage from './pages/AboutPage';
-import DeveloperPage from './pages/DeveloperPage';
-import ProfilePage from './pages/ProfilePage';
-import ModerationPage from './pages/ModerationPage';
-import UpgradePage from './pages/UpgradePage';
+import Notification, { NotificationType } from './components/ui/Notification';
+import ThemeVisualizer from './components/layout/ThemeVisualizer';
+
+const AboutPage = lazy(() => import('./pages/AboutPage'));
+const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const ModerationPage = lazy(() => import('./pages/ModerationPage'));
+const UpgradePage = lazy(() => import('./pages/UpgradePage'));
+
+import { trackActivity, getUserInterests } from './lib/recommendation';
 
 export default function App() {
+  return (
+    <Router>
+      <AppContent />
+    </Router>
+  );
+}
+
+function AppContent() {
+  const { t } = useTranslation();
   const [images, setImages] = useState<Image[]>([]);
+  const [globalConfig, setGlobalConfig] = useState<any>(null);
+  const [userInterests, setUserInterests] = useState<string[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [activeCategory, setActiveCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortOrder, setSortOrder] = useState<'latest' | 'popular' | 'oldest'>('latest');
+  const [aspectRatioFilter, setAspectRatioFilter] = useState<'all' | 'portrait' | 'landscape' | 'square' | 'ultrawide'>('all');
+  const [sortOrder, setSortOrder] = useState<'random' | 'latest' | 'popular' | 'oldest' | 'trending'>('random');
   const [mediaType, setMediaType] = useState<'all' | 'image' | 'video'>('all');
   const [selectedImage, setSelectedImage] = useState<Image | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(-1);
+
   const [savingImage, setSavingImage] = useState<Image | null>(null);
   const [likedImageIds, setLikedImageIds] = useState<Set<string>>(new Set());
+  const [savedImageIds, setSavedImageIds] = useState<Set<string>>(new Set());
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [currentTheme, setCurrentTheme] = useState<string>('bright');
   const [isLoading, setIsLoading] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [notification, setNotification] = useState<{ message: string, type: NotificationType } | null>(null);
+
+  // Owner Bulk Select States
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
+  const [showBulkMenu, setShowBulkMenu] = useState(false);
+
+  const notify = useCallback((message: string, type: NotificationType = 'info') => {
+    setNotification({ message, type });
+  }, []);
+
+  useEffect(() => {
+    // We no longer show onboarding automatically on app start for everyone.
+    // It is now strictly for new sign-ups.
+  }, []);
+
+  const handleOnboardingComplete = async () => {
+    setShowOnboarding(false);
+    localStorage.setItem('aether-onboarding-complete', 'true');
+    if (user) {
+      try {
+        await updateDoc(doc(db, COLLECTIONS.USERS, user.uid), { hasSeenOnboarding: true });
+      } catch (e) {
+        console.error("Failed to sync onboarding state", e);
+      }
+    }
+  };
+
+  const handleReplayTour = () => setShowOnboarding(true);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    localStorage.setItem('aether-theme', currentTheme);
+  }, [currentTheme]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('aether-theme');
+    if (saved) setCurrentTheme(saved);
+  }, []);
+
+  const handleThemeChange = async (themeId: string) => {
+    setCurrentTheme(themeId);
+    if (user) {
+      try {
+        await updateDoc(doc(db, COLLECTIONS.USERS, user.uid), { theme: themeId });
+      } catch (e) {
+        console.error("Theme sync failed", e);
+      }
+    }
+  };
   const [lastVisible, setLastVisible] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const lastVisibleRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const hasLoadedMorePagesRef = useRef<boolean>(false);
+  const updateLastVisible = (val: QueryDocumentSnapshot<DocumentData> | null) => {
+    lastVisibleRef.current = val;
+    setLastVisible(val);
+  };
   const [hasMore, setHasMore] = useState(true);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const { ref, inView } = useInView();
+  const [isInstallDismissed, setIsInstallDismissed] = useState<boolean>(() => localStorage.getItem('pwa-install-banner-dismissed') === 'true');
+  const { ref, inView } = useInView({
+    rootMargin: '1500px',
+    threshold: 0,
+    triggerOnce: false
+  });
+ 
+  const BATCH_SIZE = 24;
+  const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com', 'aethersanctuaryofficial@gmail.com']; 
+ 
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Allow context menu on inputs, textareas, or explicitly allowed elements
+      if (
+        target.tagName === 'INPUT' || 
+        target.tagName === 'TEXTAREA' || 
+        target.isContentEditable ||
+        target.closest('.allow-select') ||
+        target.closest('[data-allow-select="true"]')
+      ) {
+        return;
+      }
+      e.preventDefault();
+    };
 
-  const BATCH_SIZE = 20;
-  const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com']; 
+    const handleCopy = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' || 
+        target.tagName === 'TEXTAREA' || 
+        target.isContentEditable ||
+        target.closest('.allow-select') ||
+        target.closest('[data-allow-select="true"]')
+      ) {
+        return;
+      }
+      // Disable copy for everything else
+      e.preventDefault();
+    };
+
+    document.addEventListener('contextmenu', handleContextMenu as any);
+    document.addEventListener('copy', handleCopy as any);
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu as any);
+      document.removeEventListener('copy', handleCopy as any);
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsubConfig = onSnapshot(doc(db, COLLECTIONS.APP_SETTINGS, 'global_config'), (snap) => {
+      if (snap.exists()) {
+        setGlobalConfig(snap.data());
+      }
+    }, (error) => {
+      console.warn("Global config load failed in AppContent:", error);
+    });
+    return () => unsubConfig();
+  }, []);
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | undefined;
+    let unsubscribeCollections: (() => void) | undefined;
+    
+    // Connectivity Audit
+    testFirestoreConnection();
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        const isAdmin = ADMIN_EMAILS.includes(firebaseUser.email || '');
+        const isAdmin = ADMIN_EMAILS.some(email => firebaseUser.email?.toLowerCase() === email.toLowerCase());
+        console.log("Aether Protocol: Authentication confirmed for", firebaseUser.email, "Admin Status:", isAdmin);
         
         // Dynamic profile listener
         unsubscribeProfile = onSnapshot(doc(db, COLLECTIONS.USERS, firebaseUser.uid), (snap) => {
+          if (!snap.exists()) {
+            console.warn("Aether Protocol: Registry not yet manifested for user", firebaseUser.uid);
+            return; // Don't update user state yet if doc doesn't exist
+          }
+          
           const profileData = snap.data();
+          
+          if (profileData?.theme && !localStorage.getItem('aether-theme-synced')) {
+             setCurrentTheme(profileData.theme);
+             localStorage.setItem('aether-theme-synced', 'true');
+          }
+          
+          // Trigger onboarding if user is new (based on metadata or missing flag)
+          const isNewUser = (firebaseUser.metadata.creationTime === firebaseUser.metadata.lastSignInTime) || !profileData?.hasSeenOnboarding;
+          const hasSeenLocal = localStorage.getItem('aether-onboarding-complete');
+          
+          if (isNewUser && !hasSeenLocal && !showOnboarding) {
+            setShowOnboarding(true);
+          }
+
           setUser({
             uid: firebaseUser.uid,
             email: firebaseUser.email,
-            isAdmin: isAdmin,
-            displayName: firebaseUser.displayName || undefined,
-            photoURL: firebaseUser.photoURL || undefined,
-            isPremium: isAdmin || profileData?.isPremium || false,
+            isAdmin: isAdmin || profileData?.isAdmin || false,
+            displayName: profileData?.displayName || firebaseUser.displayName || null,
+            photoURL: profileData?.photoURL || firebaseUser.photoURL || null,
+            isPremium: isAdmin || profileData?.isAdmin || profileData?.isPremium || false,
             isPremiumPending: profileData?.isPremiumPending || false,
-            subscriptionPlan: profileData?.subscriptionPlan
+            subscriptionPlan: profileData?.subscriptionPlan || null,
+            bio: profileData?.bio || null,
+            location: profileData?.location || null,
+            website: profileData?.website || null,
+            gender: profileData?.gender || null,
+            dob: profileData?.dob || null,
+            occupation: profileData?.occupation || null,
+            theme: profileData?.theme || 'orange',
+            isBanned: profileData?.isBanned || false,
+            isHold: profileData?.isHold || false
           });
         }, (error) => {
           console.error("Profile fetch failed:", error);
+          try {
+            handleFirestoreError(error, 'get', `${COLLECTIONS.USERS}/${firebaseUser.uid}`);
+          } catch (e) {
+            // Error already handled/logged by handleFirestoreError
+          }
         });
 
         // Initialize user doc if not exists
-        await setDoc(doc(db, COLLECTIONS.USERS, firebaseUser.uid), {
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName,
-          lastSeen: serverTimestamp()
-        }, { merge: true });
+        const initializeProfile = async () => {
+          try {
+            const userDocRef = doc(db, COLLECTIONS.USERS, firebaseUser.uid);
+            const userSnap = await getDoc(userDocRef);
+            
+            // Function to create a clean, modern readable ID from name and DOB
+            const generateReadableId = (name: string | null, dob?: string | null) => {
+              if (!name) return `user_${Math.floor(Math.random() * 10000)}`;
+              const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 15);
+              
+              let suffix = '';
+              if (dob) {
+                const date = new Date(dob);
+                if (!isNaN(date.getTime())) {
+                  suffix = `_${date.getDate()}${date.getMonth() + 1}${date.getFullYear().toString().slice(-2)}`;
+                } else {
+                  suffix = dob.replace(/[^0-9]/g, '').slice(-4);
+                }
+              } else {
+                suffix = Math.floor(1000 + Math.random() * 8999).toString();
+              }
+              
+              return `${cleanName}${suffix}`;
+            };
+
+            const userProfileData = {
+              uid: firebaseUser.uid,
+              userId: firebaseUser.uid,
+              email: firebaseUser.email || null,
+              displayName: firebaseUser.displayName || null,
+              photoURL: firebaseUser.photoURL || null,
+              lastSeen: serverTimestamp(),
+              hasSeenOnboarding: false,
+              theme: 'orange',
+              isPremium: isAdmin, // Admins get premium by default
+              isAdmin: isAdmin
+            };
+
+            if (!userSnap.exists()) {
+              console.log("Aether Protocol: New resident detected. Initializing registry for", firebaseUser.uid);
+              
+              let mergedPermissions: any = {};
+              let oldDocRefToClean: any = null;
+              
+              if (firebaseUser.email) {
+                try {
+                  const qPregrant = query(
+                    collection(db, COLLECTIONS.USERS), 
+                    where('email', '==', firebaseUser.email.toLowerCase())
+                  );
+                  const pregrantSnap = await getDocs(qPregrant);
+                  if (!pregrantSnap.empty) {
+                    const pregrantDoc = pregrantSnap.docs[0];
+                    const data = pregrantDoc.data();
+                    mergedPermissions = {
+                      isPremium: data.isPremium || false,
+                      subscriptionPlan: data.subscriptionPlan || null,
+                      isAdmin: data.isAdmin || false,
+                      isBanned: data.isBanned || false,
+                      isHold: data.isHold || false
+                    };
+                    if (pregrantDoc.id !== firebaseUser.uid) {
+                      oldDocRefToClean = pregrantDoc.ref;
+                    }
+                  }
+                } catch (pe) {
+                  console.warn("Could not query pregrant status:", pe);
+                }
+              }
+
+              const readableId = generateReadableId(firebaseUser.displayName);
+              await setDoc(userDocRef, {
+                ...userProfileData,
+                ...mergedPermissions,
+                readableId,
+                createdAt: serverTimestamp()
+              });
+
+              if (oldDocRefToClean) {
+                try {
+                  await deleteDoc(oldDocRefToClean);
+                  console.log("Aether Protocol: Placeholder pregrant profile merged & purged successfully.");
+                } catch (de) {
+                  console.warn("Could not delete pregrant placeholder:", de);
+                }
+              }
+            } else {
+              console.log("Aether Protocol: Registry found. Updating lastSeen for", firebaseUser.uid);
+              await updateDoc(userDocRef, {
+                lastSeen: serverTimestamp()
+              });
+            }
+          } catch (error) {
+            console.error("Aether Protocol: Profile initialization failed:", error);
+            handleFirestoreError(error, 'write', COLLECTIONS.USERS);
+          }
+        };
+
+        initializeProfile();
 
         try {
           const qLikes = query(collection(db, COLLECTIONS.LIKES), where('userId', '==', firebaseUser.uid));
           const likeDocs = await getDocs(qLikes);
           setLikedImageIds(new Set(likeDocs.docs.map(d => d.data().imageId)));
+
+          const qFollows = query(collection(db, COLLECTIONS.FOLLOWS), where('followerId', '==', firebaseUser.uid));
+          const followDocs = await getDocs(qFollows);
+          setFollowingIds(new Set(followDocs.docs.map(d => d.data().followingId)));
+
+          const qCollections = query(collection(db, COLLECTIONS.COLLECTIONS), where('userId', '==', firebaseUser.uid));
+          unsubscribeCollections = onSnapshot(qCollections, (snap) => {
+            const allSavedIds = new Set<string>();
+            snap.docs.forEach(d => {
+              const ids = d.data().imageIds || [];
+              ids.forEach((id: string) => allSavedIds.add(id));
+            });
+            setSavedImageIds(allSavedIds);
+          }, (error) => {
+            handleFirestoreError(error, 'list', COLLECTIONS.COLLECTIONS);
+          });
         } catch (error) {
-          console.error("Likes fetch failed:", error);
+          console.error("User data fetch failed:", error);
         }
       } else {
         setUser(null);
         setLikedImageIds(new Set());
+        setFollowingIds(new Set());
         if (unsubscribeProfile) unsubscribeProfile();
+        if (unsubscribeCollections) unsubscribeCollections();
       }
     });
 
     const qCat = query(collection(db, COLLECTIONS.CATEGORIES), orderBy('name'));
     const unsubscribeCat = onSnapshot(qCat, (snapshot) => {
-      setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
+      const docs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Category));
+      // Strict uniqueness layer to prevent duplicate key errors
+      const seen = new Set();
+      const uniqueDocs = docs.filter(cat => {
+        if (!cat.id || seen.has(cat.id)) return false;
+        seen.add(cat.id);
+        return true;
+      });
+      setCategories(uniqueDocs);
     });
 
     return () => {
@@ -101,70 +397,214 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const handlePrompt = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
-    window.addEventListener('beforeinstallprompt', handlePrompt);
-    return () => window.removeEventListener('beforeinstallprompt', handlePrompt);
+  // Use Transition and DeferredValue for non-blocking search updates
+  const [isSearching, startSearchTransition] = useTransition();
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  const handleSearchChange = useCallback((val: string) => {
+    setSearchQuery(val);
   }, []);
 
-  const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      setDeferredPrompt(null);
-    }
-  };
+  const [commentMatches, setCommentMatches] = useState<string[]>([]);
+  const [searchRecommendations, setSearchRecommendations] = useState<string[]>([]);
+  const commentCache = useRef<Record<string, string[]>>({});
 
   useEffect(() => {
-    setIsLoading(true);
-    const baseQuery = collection(db, COLLECTIONS.IMAGES);
-    const orderField = sortOrder === 'popular' ? 'likes' : 'timestamp';
-    const orderDirection = sortOrder === 'oldest' ? 'asc' : 'desc';
-    
-    let constraints: any[] = [orderBy(orderField, orderDirection), limit(BATCH_SIZE)];
-
-    if (activeCategory === 'premium') {
-      constraints.unshift(where('isPremium', '==', true));
-    } else if (activeCategory !== 'all') {
-      constraints.unshift(where('category', '==', activeCategory));
+    const q = deferredSearchQuery.toLowerCase().trim();
+    if (!q || q.length < 2) {
+      setCommentMatches([]);
+      return;
     }
 
-    if (mediaType !== 'all') {
-      constraints.unshift(where('type', '==', mediaType));
+    if (commentCache.current[q]) {
+      setCommentMatches(commentCache.current[q]);
+      return;
     }
 
-    const qImg = query(baseQuery, ...constraints);
-
-    const unsubscribeImg = onSnapshot(qImg, (snapshot) => {
-      let docs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Image));
-      
-      // If default/latest sort, apply a random shuffle to keep the gallery fresh
-      if (sortOrder === 'latest' && activeCategory === 'all' && !searchQuery) {
-        docs = [...docs].sort(() => Math.random() - 0.5);
+    const fetchCommentMatches = async () => {
+      try {
+        // Optimization: Fetch only recently active comments or from a broader spread
+        const qSnap = query(collection(db, COLLECTIONS.COMMENTS), limit(100)); 
+        const snap = await getDocs(qSnap);
+        const matches = snap.docs
+          .filter(d => d.data().text.toLowerCase().includes(q))
+          .map(d => d.data().imageId);
+        
+        commentCache.current[q] = matches;
+        setCommentMatches(matches);
+      } catch (e) {
+        console.warn("Global search failed:", e);
       }
+    };
 
-      setImages(docs);
-      setLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
-      setHasMore(snapshot.docs.length === BATCH_SIZE);
-      setIsLoading(false);
-    }, (error) => {
-      console.error("Images fetch failed:", error);
-      setIsLoading(false);
+    const t = setTimeout(fetchCommentMatches, 300);
+    return () => clearTimeout(t);
+  }, [deferredSearchQuery]);
+
+  useEffect(() => {
+    if (!deferredSearchQuery.trim() || deferredSearchQuery.length < 2) {
+      setSearchRecommendations([]);
+      return;
+    }
+    
+    const q = deferredSearchQuery.toLowerCase();
+    const recommendations = new Set<string>();
+    
+    // Performance optimization: only check first 100 images for recommendations
+    images.slice(0, 100).forEach(img => {
+      img.tags.forEach(tag => {
+        if (tag.toLowerCase().includes(q)) recommendations.add(tag.toLowerCase());
+      });
+      if (img.title.toLowerCase().includes(q)) recommendations.add(img.title);
     });
+    
+    const uniqueRecs = Array.from(new Set(recommendations)).filter(Boolean);
+    setSearchRecommendations(uniqueRecs.slice(0, 8));
+  }, [deferredSearchQuery, images]);
 
-    return () => unsubscribeImg();
-  }, [activeCategory, sortOrder, mediaType]);
+  useEffect(() => {
+    let unsubscribeImg: (() => void) | null = null;
+    let isFirstSnapshot = true;
+
+    const shuffleArray = <T,>(array: T[]): T[] => {
+      const arr = [...array];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+
+    const fetchImagesInitial = async () => {
+      setIsLoading(true);
+      updateLastVisible(null);
+      hasLoadedMorePagesRef.current = false;
+      setHasMore(true);
+
+      try {
+        const baseQuery = collection(db, COLLECTIONS.IMAGES);
+        const orderField = (sortOrder === 'popular' || sortOrder === 'trending') ? 'likes' : 'timestamp';
+        const orderDirection = sortOrder === 'oldest' ? 'asc' : 'desc';
+        
+        let constraints: any[] = [
+          orderBy(orderField, orderDirection),
+          limit(sortOrder === 'random' ? 120 : BATCH_SIZE)
+        ];
+
+        const activeCatObj = categories.find(c => c.id === activeCategory);
+        if (activeCategory === 'premium') {
+          constraints.unshift(where('isPremium', '==', true));
+        } else if (activeCategory === 'following') {
+          if (followingIds.size > 0) {
+            constraints.unshift(where('userId', 'in', Array.from(followingIds).slice(0, 10)));
+          } else {
+            setImages([]);
+            setIsLoading(false);
+            setHasMore(false);
+            return;
+          }
+        } else if (activeCategory !== 'all') {
+          if (activeCatObj) {
+            const catIdentifiers = Array.from(new Set([activeCatObj.id, activeCatObj.name, activeCatObj.slug].filter(Boolean))) as string[];
+            if (catIdentifiers.length > 0) {
+              constraints.unshift(where('category', 'in', catIdentifiers));
+            } else {
+              constraints.unshift(where('category', '==', activeCategory));
+            }
+          } else {
+            constraints.unshift(where('category', '==', activeCategory));
+          }
+        }
+
+        if (mediaType !== 'all') {
+          constraints.unshift(where('type', '==', mediaType));
+        }
+
+        const qImg = query(baseQuery, ...constraints);
+        
+        // Use onSnapshot for real-time updates
+        unsubscribeImg = onSnapshot(qImg, (snapshot) => {
+          let docs = snapshot.docs.map(d => ({ ...(d.data() as any), id: d.id } as Image));
+          
+          const isUserAdmin = user?.isAdmin || (user?.email && ADMIN_EMAILS.some(email => user.email?.toLowerCase() === email.toLowerCase()));
+          if (globalConfig?.hideExistingPosts && !isUserAdmin) {
+            const cutoff = globalConfig?.existingPostsCutoff || 1781516344000;
+            docs = docs.filter(d => {
+              const ts = d.timestamp?.toMillis ? d.timestamp.toMillis() : (d.timestamp?.seconds ? d.timestamp.seconds * 1000 : (typeof d.timestamp === 'number' ? d.timestamp : ((d as any).createdAt ? new Date((d as any).createdAt).getTime() : Date.now())));
+              return ts > cutoff;
+            });
+          }
+          
+          if (isFirstSnapshot) {
+            isFirstSnapshot = false;
+            if (sortOrder === 'random') {
+              docs = shuffleArray(docs);
+            }
+            const seenInitial = new Set<string>();
+            const initialUnique = docs.filter(img => {
+              if (!img || !img.id || seenInitial.has(img.id)) return false;
+              seenInitial.add(img.id);
+              return true;
+            });
+            setImages(initialUnique);
+          } else {
+            // Subsequent real-time update (e.g., likes count incremented or post metadata edited)
+            setImages(prev => {
+              const updatedMap = new Map(docs.map(d => [d.id, d]));
+              // Update existing items in place so order does not jump or reshuffle
+              const updatedPrev = prev.map(existingImg => {
+                const baseId = existingImg.id.split('_rand_')[0];
+                const updatedDoc = updatedMap.get(existingImg.id) || updatedMap.get(baseId);
+                if (updatedDoc) {
+                  updatedMap.delete(existingImg.id);
+                  updatedMap.delete(baseId);
+                  return { ...existingImg, ...updatedDoc };
+                }
+                return existingImg;
+              });
+
+              // Prepend any new documents
+              const newDocs = Array.from(updatedMap.values());
+              const combined = [...newDocs, ...updatedPrev];
+
+              // Strict uniqueness layer to prevent duplicate key errors
+              const seen = new Set<string>();
+              return combined.filter(img => {
+                if (!img || !img.id || seen.has(img.id)) return false;
+                seen.add(img.id);
+                return true;
+              });
+            });
+          }
+          
+          if (!hasLoadedMorePagesRef.current) {
+            updateLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
+            setHasMore(snapshot.docs.length === (sortOrder === 'random' ? 120 : BATCH_SIZE));
+          }
+          setIsLoading(false);
+        }, (error) => {
+          console.error("Real-time listener failed:", error);
+          setIsLoading(false);
+        });
+
+      } catch (error) {
+        console.error("Images fetch failed:", error);
+        setIsLoading(false);
+      }
+    };
+
+    fetchImagesInitial();
+    return () => {
+      if (unsubscribeImg) unsubscribeImg();
+    };
+  }, [activeCategory, sortOrder, mediaType, activeCategory === 'following' ? Array.from(followingIds).sort().join(',') : '']);
 
   const fetchMoreImages = async () => {
     if (!lastVisible || isFetchingMore || !hasMore) return;
     setIsFetchingMore(true);
     try {
       const baseQuery = collection(db, COLLECTIONS.IMAGES);
-      const orderField = sortOrder === 'popular' ? 'likes' : 'timestamp';
+      const orderField = (sortOrder === 'popular' || sortOrder === 'trending') ? 'likes' : 'timestamp';
       const orderDirection = sortOrder === 'oldest' ? 'asc' : 'desc';
       
       let constraints: any[] = [
@@ -173,10 +613,27 @@ export default function App() {
         limit(BATCH_SIZE)
       ];
 
+      const activeCatObj = categories.find(c => c.id === activeCategory);
       if (activeCategory === 'premium') {
         constraints.unshift(where('isPremium', '==', true));
+      } else if (activeCategory === 'following') {
+        if (followingIds.size > 0) {
+          constraints.unshift(where('userId', 'in', Array.from(followingIds).slice(0, 10)));
+        } else {
+          setIsFetchingMore(false);
+          return;
+        }
       } else if (activeCategory !== 'all') {
-        constraints.unshift(where('category', '==', activeCategory));
+        if (activeCatObj) {
+          const catIdentifiers = Array.from(new Set([activeCatObj.id, activeCatObj.name, activeCatObj.slug].filter(Boolean))) as string[];
+          if (catIdentifiers.length > 0) {
+            constraints.unshift(where('category', 'in', catIdentifiers));
+          } else {
+            constraints.unshift(where('category', '==', activeCategory));
+          }
+        } else {
+          constraints.unshift(where('category', '==', activeCategory));
+        }
       }
 
       if (mediaType !== 'all') {
@@ -186,16 +643,66 @@ export default function App() {
       const q = query(baseQuery, ...constraints);
       
       const snapshot = await getDocs(q);
-      let newDocs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Image));
+      let newDocs = snapshot.docs.map(d => ({ ...(d.data() as any), id: d.id } as Image));
       
-      // Keep it random if on default sort
-      if (sortOrder === 'latest' && activeCategory === 'all' && !searchQuery) {
-        newDocs = [...newDocs].sort(() => Math.random() - 0.5);
+      const isUserAdmin = user?.isAdmin || (user?.email && ADMIN_EMAILS.some(email => user.email?.toLowerCase() === email.toLowerCase()));
+      if (globalConfig?.hideExistingPosts && !isUserAdmin) {
+        const cutoff = globalConfig?.existingPostsCutoff || 1781516344000;
+        newDocs = newDocs.filter(d => {
+          const ts = d.timestamp?.toMillis ? d.timestamp.toMillis() : (d.timestamp?.seconds ? d.timestamp.seconds * 1000 : (typeof d.timestamp === 'number' ? d.timestamp : ((d as any).createdAt ? new Date((d as any).createdAt).getTime() : Date.now())));
+          return ts > cutoff;
+        });
       }
-
-      setImages(prev => [...prev, ...newDocs]);
-      setLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
-      setHasMore(snapshot.docs.length === BATCH_SIZE);
+      
+      setImages(prev => {
+        const combined = [...prev, ...newDocs];
+        const seen = new Set();
+        return combined.filter(img => {
+          if (!img || !img.id || seen.has(img.id)) return false;
+          seen.add(img.id);
+          return true;
+        });
+      });
+      
+      if (snapshot.docs.length < BATCH_SIZE) {
+        // Continuous infinite random feed so scrolling never stops
+        setImages(prev => {
+          if (prev.length === 0) return prev;
+          const shuffle = <T,>(arr: T[]): T[] => {
+            const a = [...arr];
+            for (let i = a.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+          };
+          const map = new Map<string, Image>();
+          prev.forEach(item => {
+            const rawId = item.id.split('_rand_')[0];
+            if (!map.has(rawId)) map.set(rawId, item);
+          });
+          const baseUnique = Array.from(map.values());
+          const newRandomStream = shuffle<Image>(baseUnique).map((img, idx) => ({
+            ...img,
+            id: `${img.id.split('_rand_')[0]}_rand_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${idx}`
+          }));
+          const combined = [...prev, ...newRandomStream];
+          const seen = new Set<string>();
+          return combined.filter(img => {
+            if (!img || !img.id || seen.has(img.id)) return false;
+            seen.add(img.id);
+            return true;
+          });
+        });
+        setHasMore(true);
+      } else {
+        setHasMore(true);
+      }
+      
+      if (snapshot.docs.length > 0) {
+        hasLoadedMorePagesRef.current = true;
+      }
+      updateLastVisible(snapshot.docs[snapshot.docs.length - 1] || null);
     } catch (e) {
       console.error(e);
     } finally {
@@ -204,20 +711,28 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (inView && hasMore && !isLoading && !searchQuery) {
+    if (inView && hasMore && !isLoading && !isFetchingMore) {
       fetchMoreImages();
     }
-  }, [inView, hasMore, isLoading, searchQuery]);
+  }, [inView, hasMore, isLoading, isFetchingMore]);
 
   const handleLogin = async () => {
     try {
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, googleProvider);
     } catch (error: any) {
       console.error("Login failed", error);
+      
+      // Silence user-initiated closures to avoid annoying alerts
+      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-by-user') {
+        console.log("Aether Protocol: Login sequence interrupted by user.");
+        return;
+      }
+
       if (error.code === 'auth/popup-blocked') {
-        alert("The login popup was blocked by your browser. Please allow popups for this site or open the app in a new tab.");
+        alert("Aether Protocol: The link transmission was blocked by your browser's firewall (Popup Blocker). Please allow popups or open the Sanctum in a new tab.");
       } else {
-        alert("Login failed. Please try again or check your connection.");
+        alert(`Aether Protocol: Authentication failed. ${error.message}`);
       }
     }
   };
@@ -226,20 +741,67 @@ export default function App() {
     signOut(auth);
   };
 
-  const handleUploadImage = async (data: any) => {
+  const cleanupDuplicates = useCallback(async () => {
     if (!user?.isAdmin) return;
-    await addDoc(collection(db, COLLECTIONS.IMAGES), {
-      ...data,
-      isPremium: data.isPremium ?? false,
-      isSample: data.isSample ?? false,
-      userId: user.uid
+    const q = query(collection(db, COLLECTIONS.IMAGES));
+    const snap = await getDocs(q);
+    const allImages = snap.docs.map(d => ({ ...d.data(), id: d.id } as Image));
+    
+    const urlMap = new Map<string, string[]>();
+    allImages.forEach(img => {
+      const ids = urlMap.get(img.url) || [];
+      ids.push(img.id);
+      urlMap.set(img.url, ids);
     });
+
+    const duplicates: string[] = [];
+    urlMap.forEach((ids) => {
+      if (ids.length > 1) {
+        // Keep the first, delete others
+        duplicates.push(...ids.slice(1));
+      }
+    });
+
+    if (duplicates.length === 0) {
+      alert("No duplicate links found in the sanctuary.");
+      return;
+    }
+
+    if (confirm(`Found ${duplicates.length} duplicate assets. Purge them from sanctuary?`)) {
+      const batch = writeBatch(db);
+      duplicates.forEach(id => batch.delete(doc(db, COLLECTIONS.IMAGES, id)));
+      await batch.commit();
+      alert("Sanctuary purified. Duplicates removed.");
+    }
+  }, [user]);
+
+  const handleUploadImage = async (data: any) => {
+    if (!user) return;
+    
+    try {
+      const isPremium = user.isAdmin ? (data.isPremium ?? false) : false;
+      const isSample = user.isAdmin ? (data.isSample ?? false) : false;
+
+      await addDoc(collection(db, COLLECTIONS.IMAGES), {
+        ...data,
+        isPremium,
+        isSample,
+        userId: user.uid,
+        uploaderName: user.displayName || 'Anonymous Resident',
+        uploaderEmail: user.email || 'hidden@sanctuary.io',
+        uploaderPhotoURL: user.photoURL || null,
+        timestamp: serverTimestamp()
+      });
+    } catch (error) {
+      handleFirestoreError(error, 'create', COLLECTIONS.IMAGES);
+    }
   };
 
   const handleAddCategory = async (name: string) => {
-    if (!user?.isAdmin) return;
+    if (!user?.isAdmin) return null;
     const slug = name.toLowerCase().replace(/\s+/g, '-');
-    await addDoc(collection(db, COLLECTIONS.CATEGORIES), { name, slug });
+    const docRef = await addDoc(collection(db, COLLECTIONS.CATEGORIES), { name, slug });
+    return docRef.id;
   };
 
   const handleDeleteCategory = async (id: string) => {
@@ -248,34 +810,286 @@ export default function App() {
   };
 
   const handleCloseModal = () => {
-    setSelectedImage(null);
-    setSelectedImageIndex(-1);
+    setSearchParams({});
   };
 
   const handleNavigate = (direction: 'next' | 'prev') => {
-    if (selectedImageIndex === -1) return;
+    const currentList = filteredImages.length > 0 ? filteredImages : images;
+    if (currentList.length === 0) return;
+
+    let currentIndex = selectedImageIndex;
     
-    let nextIndex = direction === 'next' ? selectedImageIndex + 1 : selectedImageIndex - 1;
-    if (nextIndex < 0) nextIndex = filteredImages.length - 1;
-    if (nextIndex >= filteredImages.length) nextIndex = 0;
+    // Safety: ensure we have a valid index
+    if (currentIndex === -1 && selectedImage) {
+      currentIndex = currentList.findIndex(i => i.id === selectedImage.id);
+    }
+
+    // If still -1, the asset might be from related images or not in current view
+    if (currentIndex === -1) {
+      // In this case, navigation is restricted to the current view.
+      // We pick the closest relative or first/last.
+      if (direction === 'next') {
+        const nextImage = currentList[0];
+        if (nextImage) setSearchParams({ post: nextImage.id });
+      } else {
+        const prevImage = currentList[currentList.length - 1];
+        if (prevImage) setSearchParams({ post: prevImage.id });
+      }
+      return;
+    }
     
-    setSelectedImage(filteredImages[nextIndex]);
-    setSelectedImageIndex(nextIndex);
+    let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+    
+    // Circular navigation
+    if (nextIndex < 0) nextIndex = currentList.length - 1;
+    if (nextIndex >= currentList.length) nextIndex = 0;
+    
+    const nextImage = currentList[nextIndex];
+    if (nextImage) {
+      setSearchParams({ post: nextImage.id });
+    }
   };
 
   const handleImageClick = (image: Image) => {
-    const index = filteredImages.findIndex(img => img.id === image.id);
-    setSelectedImage(image);
-    setSelectedImageIndex(index);
+    setSearchParams({ post: image.id });
   };
 
-  const handleSave = (e: MouseEvent, image: Image) => {
-    e.stopPropagation();
+  const handleSave = async (e: MouseEvent | null, image: Image) => {
+    if (e) e.stopPropagation();
     if (!user) {
       alert("Please sign in to save assets to your collections.");
       return;
     }
+
+    if (savedImageIds.has(image.id)) {
+      // Logic for unsaving if already in a collection
+      try {
+        const q = query(collection(db, COLLECTIONS.COLLECTIONS), where('userId', '==', user.uid), where('imageIds', 'array-contains', image.id));
+        const snap = await getDocs(q);
+        const batch = writeBatch(db);
+        snap.docs.forEach(d => {
+          batch.update(d.ref, {
+            imageIds: (d.data().imageIds as string[]).filter(id => id !== image.id)
+          });
+        });
+        await batch.commit();
+        setSavedImageIds(prev => {
+          const next = new Set(prev);
+          next.delete(image.id);
+          return next;
+        });
+      } catch (err) {
+        console.error("Unsave failed:", err);
+      }
+      return;
+    }
+
     setSavingImage(image);
+  };
+
+  const handleToggleSelect = useCallback((image: Image) => {
+    setSelectedPostIds(prev => {
+      const next = new Set(prev);
+      if (next.has(image.id)) {
+        next.delete(image.id);
+      } else {
+        next.add(image.id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleStartSelectMode = useCallback((image: Image) => {
+    if (!user?.isAdmin) return;
+    setIsSelectMode(true);
+    setSelectedPostIds(new Set([image.id]));
+    notify("Bulk Selection Mode Active. Tap any image or video to adjust selection.", "info");
+  }, [user, notify]);
+
+  const handleBulkExit = useCallback(() => {
+    setIsSelectMode(false);
+    setSelectedPostIds(new Set());
+    setShowBulkMenu(false);
+  }, []);
+
+  const [bulkTitleInput, setBulkTitleInput] = useState('');
+  const [bulkCategoryInput, setBulkCategoryInput] = useState('');
+
+  const handleBulkChangeCategory = async (tgtCategory: string) => {
+    if (selectedPostIds.size === 0) {
+      notify("No posts selected.", "error");
+      return;
+    }
+    if (!tgtCategory) {
+      notify("Please select a target category.", "error");
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+      selectedPostIds.forEach(id => {
+        batch.update(doc(db, COLLECTIONS.IMAGES, id), { category: tgtCategory });
+      });
+      await batch.commit();
+      notify(`Category updated to "${tgtCategory}" for ${selectedPostIds.size} posts.`, "success");
+      handleBulkExit();
+    } catch (err) {
+      console.error("Bulk category update failed:", err);
+      notify("Bulk category update failed.", "error");
+    }
+  };
+
+  const handleBulkChangeVisibility = async (makePremium: boolean) => {
+    if (selectedPostIds.size === 0) {
+      notify("No posts selected.", "error");
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+      selectedPostIds.forEach(id => {
+        batch.update(doc(db, COLLECTIONS.IMAGES, id), { isPremium: makePremium });
+      });
+      await batch.commit();
+      notify(`Configured ${selectedPostIds.size} posts as ${makePremium ? "Premium" : "Public"}.`, "success");
+      handleBulkExit();
+    } catch (err) {
+      console.error("Bulk visibility update failed:", err);
+      notify("Bulk update failed.", "error");
+    }
+  };
+
+  const handleBulkChangeTitle = async (newTitle: string) => {
+    if (selectedPostIds.size === 0) {
+      notify("No posts selected.", "error");
+      return;
+    }
+    if (!newTitle.trim()) {
+      notify("Please fill out a valid title.", "error");
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+      selectedPostIds.forEach(id => {
+        batch.update(doc(db, COLLECTIONS.IMAGES, id), { title: newTitle.trim() });
+      });
+      await batch.commit();
+      notify(`Updated titles of ${selectedPostIds.size} posts.`, "success");
+      setBulkTitleInput('');
+      handleBulkExit();
+    } catch (err) {
+      console.error("Bulk title update failed:", err);
+      notify("Bulk title change failed.", "error");
+    }
+  };
+
+  const [singlePostUrlInput, setSinglePostUrlInput] = useState('');
+
+  useEffect(() => {
+    if (selectedPostIds.size === 1) {
+      const singleId = Array.from(selectedPostIds)[0];
+      const found = images.find(img => img.id === singleId);
+      if (found) {
+        setSinglePostUrlInput(found.url || '');
+      }
+    } else {
+      setSinglePostUrlInput('');
+    }
+  }, [selectedPostIds, images]);
+
+  const handleUpdateSinglePostUrl = async (id: string, newUrl: string) => {
+    if (!user?.isAdmin) return;
+    if (!newUrl.trim()) {
+      notify("Hosting link cannot be empty.", "error");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, COLLECTIONS.IMAGES, id), { url: newUrl.trim() });
+      notify("Asset hosting link updated successfully.", "success");
+      handleBulkExit();
+    } catch (err) {
+      console.error("Failed to update hosting link:", err);
+      notify("Failed to update hosting link.", "error");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedPostIds.size === 0) {
+      notify("No posts selected.", "error");
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to permanently delete these ${selectedPostIds.size} manifestations?`)) {
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+      selectedPostIds.forEach(id => {
+        batch.delete(doc(db, COLLECTIONS.IMAGES, id));
+      });
+      await batch.commit();
+      notify(`Permanently deleted ${selectedPostIds.size} posts.`, "success");
+      handleBulkExit();
+    } catch (err) {
+      console.error("Bulk delete failed:", err);
+      notify("Bulk delete failed.", "error");
+    }
+  };
+
+  const handleBulkShare = async () => {
+    const selectedList = images.filter(img => selectedPostIds.has(img.id));
+    if (selectedList.length === 0) {
+      notify("No posts selected.", "error");
+      return;
+    }
+    
+    notify("Downloading asset copies for native sharing...", "info");
+    
+    try {
+      const filesToShare: File[] = [];
+      for (const item of selectedList) {
+        if (!item.url) continue;
+        try {
+          const resp = await fetch(item.url);
+          const blob = await resp.blob();
+          const ext = blob.type.split('/')[1] || 'jpg';
+          const file = new File([blob], `${item.title.replace(/\s+/g, '_')}_Aether.${ext}`, { type: blob.type });
+          filesToShare.push(file);
+        } catch (fetchErr) {
+          console.warn("Failed fetching blog file, using fallback URL sharing:", fetchErr);
+        }
+      }
+      
+      if (filesToShare.length > 0 && navigator.canShare && navigator.canShare({ files: filesToShare })) {
+        await navigator.share({
+          files: filesToShare,
+          title: "Aether Sanctum Assets",
+          text: `Shared ${filesToShare.length} image/video asset(s) from Aether Sanctum`
+        });
+        notify("Directly shared files!", "success");
+        handleBulkExit();
+      } else {
+        // Fallback: If cannot share all at once using share APIs, trigger batch downloads!
+        notify("Direct platform sharing limited. Invoking batch file downloads instead.", "info");
+        for (const file of filesToShare) {
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(file);
+          link.download = file.name;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+        handleBulkExit();
+      }
+    } catch (err) {
+      console.warn("Share flow failed:", err);
+      // Absolute fallback: clipboard copy
+      try {
+        const urls = selectedList.map(img => img.url).join("\n");
+        await copyToClipboard(urls);
+        notify("Could not invoke direct sharing. Direct links copied to clipboard instead.", "info");
+        handleBulkExit();
+      } catch (clipboardErr) {
+        notify("Sharing failed.", "error");
+      }
+    }
   };
 
   const handleLike = async (e: MouseEvent, image: Image) => {
@@ -296,8 +1110,10 @@ export default function App() {
         await updateDoc(doc(db, COLLECTIONS.IMAGES, image.id), {
           likes: increment(-1)
         });
+        setImages(prev => prev.map(img => img.id === image.id ? { ...img, likes: Math.max(0, (img.likes || 1) - 1) } : img));
       } else {
         newLikes.add(image.id);
+        trackActivity(user.uid, [image.category, ...image.tags], 'like');
         await setDoc(doc(db, COLLECTIONS.LIKES, likeDocId), {
           userId: user.uid,
           imageId: image.id,
@@ -306,6 +1122,7 @@ export default function App() {
         await updateDoc(doc(db, COLLECTIONS.IMAGES, image.id), {
           likes: increment(1)
         });
+        setImages(prev => prev.map(img => img.id === image.id ? { ...img, likes: (img.likes || 0) + 1 } : img));
       }
 
       setLikedImageIds(newLikes);
@@ -315,81 +1132,648 @@ export default function App() {
     }
   };
 
-  const filteredImages = images.filter(img => {
-    const matchesSearch = !searchQuery || 
-      img.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      img.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      img.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      img.category.toLowerCase().includes(searchQuery.toLowerCase());
+  useEffect(() => {
+    if (user) {
+      getUserInterests(user.uid).then(setUserInterests);
+    } else {
+      setUserInterests([]);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (images.length > 0 && !isLoading) {
+      // Preload first batch for priority rendering
+      const priorityCount = 6;
+      images.slice(0, priorityCount).forEach(img => {
+        if (img.url && !img.url.includes('api/health')) {
+          const i = new window.Image();
+          i.src = img.url;
+          i.decode?.().catch(() => {});
+        }
+      });
+    }
+  }, [images, isLoading]);
+
+  const filteredImages = useMemo(() => {
+    const q = deferredSearchQuery.toLowerCase().trim();
+    const commentMatchesSet = new Set(commentMatches);
     
-    return matchesSearch;
-  });
+    // 1. Structural Filtering (Aspect Ratio + Sanitization)
+    let result = images.filter(img => {
+      // Robust Image Sanitization
+      if (!img || !img.id) return false;
+
+      // Aspect Ratio Filter with Fallback for legacy assets
+      if (aspectRatioFilter !== 'all') {
+        const isYoutube = /youtube\.com|youtu\.be/i.test(img.url);
+        const isYoutubeShort = isYoutube && img.url.toLowerCase().includes('/shorts/');
+        const isInferredPortrait = img.aspectRatio === 'portrait' || 
+                                   isYoutubeShort || 
+                                   /portrait|vertical|reel|tiktok|9-16|9_16|9x16/i.test(img.url);
+        const imgRatio = isInferredPortrait ? 'portrait' : (img.aspectRatio || 'landscape');
+        if (imgRatio !== aspectRatioFilter) return false;
+      }
+
+      if (!q) return true;
+
+      // 2. Multi-Tiered Search Accuracy
+      const tokens = q.split(/\s+/).filter(Boolean);
+      
+      // Tier A: Direct ID or Comment hit
+      if (commentMatchesSet.has(img.id) || img.id === q) return true;
+
+      const title = img.title?.toLowerCase() || '';
+      const description = img.description?.toLowerCase() || '';
+      const tags = (img.tags || []).map(t => t.toLowerCase());
+      const uploader = img.uploaderName?.toLowerCase() || '';
+      
+      const cat = categories.find(c => c.id === img.category);
+      const catName = cat?.name.toLowerCase() || '';
+
+      // Must match ALL tokens in ANY of the fields (High accuracy)
+      return tokens.every(token => 
+        title.includes(token) || 
+        tags.some(t => t.includes(token)) || 
+        description.includes(token) ||
+        uploader.includes(token) ||
+        catName.includes(token)
+      );
+    });
+
+    // 3. Relevance Ranking (Better Accuracy)
+    if (q) {
+      const tokens = q.split(/\s+/).filter(Boolean);
+      result = [...result].sort((a, b) => {
+        const getScore = (img: Image) => {
+          let score = 0;
+          const title = img.title?.toLowerCase() || '';
+          const tags = (img.tags || []).map(t => t.toLowerCase());
+          
+          tokens.forEach(token => {
+            if (title === token) score += 100;
+            else if (title.startsWith(token)) score += 40;
+            else if (title.includes(token)) score += 20;
+            
+            if (tags.includes(token)) score += 50;
+            else if (tags.some(t => t === token)) score += 30;
+            else if (tags.some(t => t.includes(token))) score += 10;
+          });
+          
+          if (commentMatchesSet.has(img.id)) score += 25;
+          return score;
+        };
+
+        const scoreB = getScore(b);
+        const scoreA = getScore(a);
+        if (scoreB !== scoreA) return scoreB - scoreA;
+        
+        return 0;
+      });
+    }
+
+    // 4. Strict Uniqueness Layer
+    const seen = new Set<string>();
+    return result.filter(img => {
+      if (!img || !img.id || seen.has(img.id)) return false;
+      seen.add(img.id);
+      return true;
+    });
+  }, [deferredSearchQuery, images, commentMatches, aspectRatioFilter, categories]);
+
+  // PWA Install Prompt Logic
+  useEffect(() => {
+    const handleBeforeInstall = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
+
+  // Sync selected image with URL & Popstate for mobile back button
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const postId = params.get('post') || params.get('id');
+      if (!postId) {
+        setSelectedImage(null);
+        setSelectedImageIndex(-1);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    
+    const postId = searchParams.get('post') || searchParams.get('id');
+    if (postId) {
+       // Search in current images first for speed
+       const img = images.find(i => i.id === postId);
+       if (img) {
+         setSelectedImage(img);
+         const idx = filteredImages.findIndex(i => i.id === postId);
+         setSelectedImageIndex(idx);
+       } else {
+         // If not found (e.g. from shared link or Related Assets fetch), fetch directly from Firestore
+         const fetchImageById = async () => {
+           try {
+             const docRef = doc(db, COLLECTIONS.IMAGES, postId);
+             const docSnap = await getDoc(docRef);
+             if (docSnap.exists()) {
+               const fetchedImg = { id: docSnap.id, ...docSnap.data() } as Image;
+               setSelectedImage(fetchedImg);
+               setSelectedImageIndex(-1);
+             }
+           } catch (e) {
+             console.error("Direct fetch failed for post ID:", postId, e);
+           }
+         };
+         fetchImageById();
+       }
+    } else {
+       setSelectedImage(null);
+       setSelectedImageIndex(-1);
+    }
+    
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [searchParams, images, filteredImages]);
+
+  // Handle Home Screen Installation trigger if requested via URL or state
+  useEffect(() => {
+    if (searchParams.get('install') === 'true') {
+      handleInstallClick();
+      setSearchParams(prev => {
+        prev.delete('install');
+        return prev;
+      });
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    const handleScroll = () => setShowBackToTop(window.scrollY > 1000);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  const location = useLocation();
+
+  const isEmbed = searchParams.get('embed') === 'true';
+
+  if (user && (user.isBanned || user.isHold)) {
+    return (
+      <div className="min-h-screen bg-bg-dark flex items-center justify-center p-6 text-center relative z-[9999]">
+        <div className="fixed inset-0 pointer-events-none z-[-1]">
+          <div className="absolute inset-0 bg-bg-dark" />
+          <div className="absolute inset-0 opacity-[0.03] grayscale pointer-events-none" 
+               style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(239,68,68,0.08)_0%,transparent_50%)]" />
+        </div>
+        <div className="max-w-md w-full bg-[#121010] border border-red-500/20 rounded-[40px] p-8 md:p-12 space-y-6 shadow-2xl animate-in zoom-in-95 duration-500">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 mx-auto mb-2 animate-pulse">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-xl font-display font-medium tracking-tight text-white uppercase">
+              Aether <span className="text-red-500">Protocol</span> Lockout
+            </h1>
+            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-red-500/50">
+              STATUS: {user.isBanned ? "PERMANENT SUSPENSION" : "CURATORIAL HOLD"}
+            </p>
+          </div>
+          <p className="text-xs text-text-dim leading-relaxed font-semibold">
+            {user.isBanned 
+              ? "Your access credentials have been permanently declassified and severed from the sanctuary networks due to standard code infringement."
+              : "Your sanctuary channel is currently on curatorial hold. Access permissions are temporarily frozen pending review."}
+          </p>
+          <div className="pt-2">
+            <button 
+              onClick={handleLogout}
+              className="px-6 py-3 bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 text-text-main rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+            >
+              Disconnect Vessel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <Router>
-      <div className="min-h-screen">
+    <div className={cn("min-h-screen relative overflow-hidden", isEmbed && "p-0")}>
+      {/* Advanced Premium Theme Switcher Visual Effects Layer */}
+      <ThemeVisualizer currentTheme={currentTheme} />
+
+      {/* Immersive Protocol Background Layers */}
+      <div className="fixed inset-0 pointer-events-none z-[-1]">
+        <div className="absolute inset-0 bg-bg-dark" />
+        <div className="absolute inset-0 opacity-[0.03] grayscale pointer-events-none" 
+             style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(var(--brand-primary-rgb),0.05)_0%,transparent_50%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.02),rgba(0,255,0,0.01),rgba(0,0,255,0.02))] z-[100] pointer-events-none bg-[length:100%_2px,3px_100%] opacity-[0.02]" />
+      </div>
+
+      {!isEmbed && (
         <Navbar 
+          searchQuery={searchQuery}
           isAdmin={user?.isAdmin || false} 
           user={user}
-          onSearch={setSearchQuery} 
+          onSearch={handleSearchChange} 
           onLogout={handleLogout}
           onLogin={handleLogin}
           onInstall={deferredPrompt ? handleInstallClick : undefined}
+          recommendations={searchRecommendations}
+          categories={categories}
+          activeCategory={activeCategory}
+          onCategoryChange={setActiveCategory}
+          sortOrder={sortOrder}
+          onSortChange={setSortOrder}
+          mediaType={mediaType}
+          onMediaTypeChange={setMediaType}
+          aspectRatioFilter={aspectRatioFilter}
+          onAspectRatioChange={setAspectRatioFilter}
+          currentTheme={currentTheme}
+          onThemeChange={handleThemeChange}
         />
+      )}
 
-        <Routes>
-          <Route path="/" element={
-            <>
-              <div className="flex justify-center px-4 md:px-10 mt-[88px] mb-8 sticky top-[80px] z-[50]">
-                <CategoryMenu 
-                  categories={categories} 
-                  activeCategoryId={activeCategory} 
-                  onCategorySelect={setActiveCategory}
-                  sortOrder={sortOrder}
-                  onSortSelect={setSortOrder}
-                  mediaType={mediaType}
-                  onMediaTypeSelect={setMediaType}
-                />
+      <AnimatePresence>
+        {showOnboarding && (
+          <SmartOnboarding 
+            onComplete={handleOnboardingComplete}
+            onSkip={handleOnboardingComplete}
+            userName={user?.displayName || undefined}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isSelectMode && !selectedImage && (
+          <>
+            {/* Center floating selection status and Exit tracker */}
+            <motion.div
+              key="select-mode-bar"
+              initial={{ opacity: 0, y: 50, x: "-50%", scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, x: "-50%", scale: 1 }}
+              exit={{ opacity: 0, y: 50, x: "-50%", scale: 0.95 }}
+              className="fixed bottom-8 left-1/2 z-50 flex items-center gap-4 bg-bg-dark/95 backdrop-blur-xl border border-white/10 px-6 py-3 rounded-full shadow-[0_12px_40px_rgba(0,0,0,0.6)] select-none text-white whitespace-nowrap"
+            >
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-brand-primary animate-pulse" />
+                <span className="font-display font-medium tracking-wide uppercase text-[10px] text-white/90">
+                  Select Mode:
+                </span>
+                <span className="font-mono font-bold text-xs text-brand-primary">
+                  {selectedPostIds.size} post(s)
+                </span>
               </div>
+              <div className="w-px h-4 bg-white/10" />
+              <button
+                onClick={handleBulkExit}
+                className="flex items-center gap-1.5 text-[10px] font-black tracking-widest uppercase text-red-400 hover:text-red-300 transition-colors bg-white/5 hover:bg-white/10 px-3.5 py-1.5 rounded-full cursor-pointer"
+                title="Cancel Selection Mode"
+              >
+                <X className="w-3.5 h-3.5" />
+                Cancel Selection Mode
+              </button>
+            </motion.div>
+
+            <motion.button
+              key="bulk-menu-toggle-btn"
+              initial={{ opacity: 0, scale: 0.5, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.5, y: 20 }}
+              onClick={() => setShowBulkMenu(!showBulkMenu)}
+              className={cn(
+                "fixed bottom-8 left-8 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-2xl transition-all border",
+                showBulkMenu 
+                  ? "bg-white text-bg-dark border-white hover:scale-110 active:scale-90" 
+                  : "bg-brand-primary text-bg-dark border-brand-primary/20 hover:scale-110 active:scale-95"
+              )}
+              title="Bulk Actions"
+            >
+              {showBulkMenu ? (
+                <X className="w-5 h-5 animate-in spin-in-12 duration-200" />
+              ) : (
+                <span className="font-serif italic text-lg leading-none select-none">?</span>
+              )}
+            </motion.button>
+
+            {showBulkMenu && (
+              <motion.div
+                key="bulk-menu-panel"
+                initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                className="fixed bottom-24 left-8 z-50 w-[300px] sm:w-[350px] rounded-3xl bg-bg-dark/95 backdrop-blur-xl border border-white/10 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex flex-col gap-4 text-left text-white"
+              >
+                <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+                  <div>
+                    <h3 className="font-display font-medium text-[11px] text-white/50 tracking-widest uppercase">AETHER BULK MANIFEST</h3>
+                    <p className="text-[10px] text-brand-primary font-mono tracking-wider mt-0.5">{selectedPostIds.size} manifestation(s) selected</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowBulkMenu(false)}
+                    className="p-1 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Section 1: Change Category */}
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/40 block">Transmute Category</label>
+                  <div className="flex gap-2">
+                    <select 
+                      value={bulkCategoryInput}
+                      onChange={(e) => setBulkCategoryInput(e.target.value)}
+                      className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-primary tracking-wide"
+                    >
+                      <option value="" disabled className="bg-bg-dark text-white/60">Select category...</option>
+                      {categories.map((cat, idx) => (
+                        <option key={`bulk-cat-option-${cat.id || idx}-${idx}`} value={cat.slug} className="bg-bg-dark text-white">
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => handleBulkChangeCategory(bulkCategoryInput)}
+                      disabled={!bulkCategoryInput}
+                      className="px-3 py-1.5 bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-brand-primary hover:text-bg-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      APPLY
+                    </button>
+                  </div>
+                </div>
+
+                {/* Section 2: Visibility Toggle */}
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/40 block">Manifestation Access</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleBulkChangeVisibility(false)}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 bg-white/[0.03] border border-white/5 rounded-xl text-xs hover:bg-white/10 hover:border-white/20 transition-all font-semibold"
+                    >
+                      <Unlock className="w-3.5 h-3.5 text-green-400" />
+                      Make Public
+                    </button>
+                    <button
+                      onClick={() => handleBulkChangeVisibility(true)}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 bg-brand-primary/[0.04] border border-brand-primary/20 rounded-xl text-xs hover:bg-brand-primary/10 hover:border-brand-primary/30 text-brand-primary transition-all font-semibold"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      Make Premium
+                    </button>
+                  </div>
+                </div>
+
+                {/* Section 3: Change Title */}
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/40 block">Re-scribe Title</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text"
+                      value={bulkTitleInput}
+                      onChange={(e) => setBulkTitleInput(e.target.value)}
+                      placeholder="Enter new asset title..."
+                      className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-white/25 focus:outline-none focus:border-brand-primary"
+                    />
+                    <button
+                      onClick={() => handleBulkChangeTitle(bulkTitleInput)}
+                      disabled={!bulkTitleInput.trim()}
+                      className="px-3 py-1.5 bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-brand-primary hover:text-bg-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      APPLY
+                    </button>
+                  </div>
+                </div>
+
+                {/* Section Target URL (only if exactly 1 post is selected) */}
+                {selectedPostIds.size === 1 && (() => {
+                  const singleId = Array.from(selectedPostIds)[0] as string;
+                  const singlePost = images.find(img => img.id === singleId);
+                  if (!singlePost) return null;
+                  return (
+                    <div className="space-y-1.5 border-t border-white/5 pt-3">
+                      <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-primary block">Modify Asset Hosting Link</label>
+                      <div className="flex gap-2">
+                        <input 
+                          type="text"
+                          value={singlePostUrlInput}
+                          onChange={(e) => setSinglePostUrlInput(e.target.value)}
+                          placeholder="Enter new hosting/source URL..."
+                          className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-white/25 focus:outline-none focus:border-brand-primary"
+                        />
+                        <button
+                          onClick={() => handleUpdateSinglePostUrl(singleId, singlePostUrlInput)}
+                          disabled={!singlePostUrlInput.trim() || singlePostUrlInput === singlePost.url}
+                          className="px-3 py-1.5 bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-brand-primary hover:text-bg-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          UPDATE
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Section 4: Extra Powers: Share & Delete */}
+                <div className="border-t border-white/5 pt-3.5 flex flex-col gap-2">
+                  <button
+                    onClick={handleBulkShare}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs hover:text-white transition-all font-semibold text-white/80"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-blue-400" />
+                    {(() => {
+                      const selectedList = images.filter(img => selectedPostIds.has(img.id));
+                      if (selectedList.length === 0) return "Share Post";
+                      const types = Array.from(new Set(selectedList.map(img => img.type || 'image')));
+                      if (types.length === 1) {
+                        return `Share ${types[0]}`;
+                      }
+                      return "Share Post";
+                    })()}
+                  </button>
+
+                  <button
+                    onClick={handleBulkDelete}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/15 rounded-xl text-xs text-red-400 hover:text-red-300 transition-all font-semibold"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Expunge Manifestations
+                  </button>
+                </div>
+
+                <div className="border-t border-white/5 pt-2 flex items-center justify-between text-[9px] text-white/40">
+                  <button 
+                    onClick={handleBulkExit}
+                    className="hover:text-red-400 font-bold transition-all uppercase tracking-wider text-left cursor-pointer flex items-center gap-1"
+                  >
+                    <X className="w-3 h-3" />
+                    Cancel Selection Mode
+                  </button>
+                  <span className="font-mono">AETHER.OS</span>
+                </div>
+              </motion.div>
+            )}
+          </>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showBackToTop && !selectedImage && (
+          <motion.button
+            key="back-to-top-btn"
+            initial={{ opacity: 0, scale: 0.5 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.5 }}
+          onClick={scrollToTop}
+          className="fixed bottom-8 right-8 z-50 p-4 bg-brand-primary text-bg-dark rounded-2xl shadow-2xl hover:scale-110 active:scale-90 transition-all border border-brand-primary/20"
+        >
+          <ArrowLeft className="w-5 h-5 rotate-90" />
+        </motion.button>
+      )}
+      </AnimatePresence>
+
+      <Suspense fallback={
+        <div className="pt-32 flex flex-col items-center justify-center min-h-[50vh] space-y-4">
+          <div className="w-10 h-10 border-2 border-brand-primary/10 border-t-brand-primary rounded-full animate-spin" />
+          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-text-dim/40 animate-pulse">Loading Sanctum...</p>
+        </div>
+      }>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div key={location.pathname}>
+            <Routes location={location}>
+          <Route path="/" element={
+            <motion.div 
+               initial={{ opacity: 0, y: 10 }} 
+               animate={{ opacity: 1, y: 0 }} 
+               exit={{ opacity: 0, y: -10 }}
+               transition={{ duration: 0.2 }}
+               className="pt-[80px] md:pt-[88px] min-h-screen"
+            >
               
               <main className="pb-20">
-                {isLoading ? (
-                  <div className="flex items-center justify-center min-h-[50vh]">
-                    <div className="w-12 h-12 border-4 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin"></div>
+                {isLoading && images.length === 0 ? (
+                  <div className="px-4 md:px-10">
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <div key={`init-skeleton-${i}`} className="aspect-[3/4] bg-white/[0.03] rounded-3xl animate-pulse" />
+                      ))}
+                    </div>
                   </div>
                 ) : filteredImages.length > 0 ? (
                   <>
+                    <div className="px-6 md:px-10 mb-4 flex items-center justify-end">
+                       {!hasMore && !isLoading && !isFetchingMore && filteredImages.length > 0 && sortOrder !== 'random' && (
+                         <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-primary/40 animate-pulse">Continuum Reached</span>
+                       )}
+                    </div>
                     <MasonryGrid 
+                      key={`main-grid-${activeCategory}-${sortOrder}-${mediaType}`}
                       images={filteredImages} 
                       user={user}
                       onImageClick={handleImageClick}
                       onLike={handleLike}
                       onSave={handleSave}
                       likedImageIds={likedImageIds}
+                      savedImageIds={savedImageIds}
+                      isFetchingMore={isFetchingMore}
+                      isSelectMode={isSelectMode}
+                      selectedPostIds={selectedPostIds}
+                      onToggleSelect={handleToggleSelect}
+                      onStartSelectMode={handleStartSelectMode}
                     />
-                    <div ref={ref} className="h-20 flex items-center justify-center">
-                      {isFetchingMore && <div className="w-6 h-6 border-2 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin"></div>}
+                    <div ref={ref} className="h-64 flex flex-col items-center justify-center gap-6">
+                      {isFetchingMore ? (
+                        <>
+                          <div className="w-12 h-12 border-2 border-brand-primary/10 border-t-brand-primary rounded-full animate-spin" />
+                          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-text-dim/40 animate-pulse">{t('common.loading') || 'Accessing Aether...'}</p>
+                        </>
+                      ) : !hasMore && !isLoading && !isFetchingMore && filteredImages.length > 0 && sortOrder !== 'random' ? (
+                        <div className="flex flex-col items-center gap-6 py-20 animate-in fade-in zoom-in duration-1000">
+                          <div className="w-12 h-px bg-gradient-to-r from-transparent via-brand-primary/30 to-transparent" />
+                          <div className="text-center space-y-2">
+                            <p className="text-[10px] font-black uppercase tracking-[0.5em] text-text-dim/30">{t('common.end_of_sanctuary')}</p>
+                            <p className="text-[9px] font-bold text-text-dim/20 uppercase tracking-[0.2em]">{t('common.all_manifestations')}</p>
+                          </div>
+                          <div className="w-12 h-px bg-gradient-to-r from-transparent via-brand-primary/30 to-transparent" />
+                        </div>
+                      ) : (
+                        <div className="w-1 h-1 bg-text-main/10 rounded-full" />
+                      )}
                     </div>
+                    <ImageModal 
+                      image={selectedImage} 
+                      onClose={handleCloseModal} 
+                      onLike={handleLike}
+                      onSave={(img) => handleSave(null, img)}
+                      hasLiked={selectedImage ? likedImageIds.has(selectedImage.id) : false}
+                      isSaved={selectedImage ? savedImageIds.has(selectedImage.id) : false}
+                      user={user}
+                      onNavigate={handleNavigate}
+                      hasNext={filteredImages.length > 1}
+                      hasPrev={filteredImages.length > 1}
+                      onSelectImage={handleImageClick}
+                    />
                   </>
                 ) : (
-                  <div className="text-center py-20">
-                    <p className="text-white/40 font-medium">No results found for your search.</p>
+                  <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-10 px-10 text-center animate-in fade-in slide-in-from-bottom-8 duration-1000">
+                    <div className="relative">
+                       <div className="w-32 h-32 rounded-[40px] bg-white/[0.01] border border-white/[0.05] flex items-center justify-center text-text-dim/20 relative overflow-hidden group">
+                        <Search className="w-12 h-12 group-hover:scale-110 transition-transform duration-500" />
+                        <div className="absolute inset-0 bg-gradient-to-tr from-brand-primary/5 to-transparent" />
+                      </div>
+                      <div className="absolute -inset-4 border border-brand-primary/10 rounded-[50px] animate-[pulse_4s_infinite] opacity-20" />
+                    </div>
+                    <div className="space-y-4 max-w-sm">
+                      <h3 className="text-3xl font-display font-black text-text-main uppercase tracking-tighter italic">Deep Quietude</h3>
+                      <p className="text-[10px] text-text-dim/40 leading-relaxed uppercase tracking-[0.2em] font-bold">The Aether has no reflections for this frequency. Try an alternative keyword.</p>
+                    </div>
+                    <button 
+                      onClick={() => setSearchQuery('')}
+                      className="px-10 py-4 bg-white/5 border border-white/10 hover:border-brand-primary/40 rounded-2xl text-[9px] font-black uppercase tracking-[0.3em] transition-all text-text-main hover:text-brand-primary shadow-2xl group"
+                    >
+                      {t('common.explore')}
+                    </button>
                   </div>
                 )}
               </main>
-            </>
+            </motion.div>
           } />
 
-          <Route path="/profile" element={user ? <ProfilePage user={user} /> : <Navigate to="/" />} />
-          <Route path="/upgrade" element={user ? <UpgradePage user={user} /> : <Navigate to="/" />} />
-          <Route path="/moderation" element={user?.isAdmin ? <ModerationPage /> : <Navigate to="/" />} />
-          <Route path="/about" element={<AboutPage />} />
-          <Route path="/developer" element={<DeveloperPage user={user} />} />
+          <Route path="/profile/:profileId?" element={
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }} 
+              animate={{ opacity: 1, x: 0 }} 
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ProfilePage 
+                user={user} 
+                onLike={handleLike} 
+                onSave={handleSave} 
+                likedImageIds={likedImageIds}
+                savedImageIds={savedImageIds}
+              />
+            </motion.div>
+          } />
 
-          <Route path="/admin" element={
-            user ? (
-              user.isAdmin ? (
-                <div className="pt-24 px-4 md:px-8 max-w-7xl mx-auto space-y-8 pb-20">
+          <Route path="/upload" element={
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+            >
+              {user ? (
+                <div className="pt-28 md:pt-36 px-4 md:px-8 max-w-7xl mx-auto space-y-8 pb-20">
                   <div className="flex justify-start">
                     <RouterLink 
                       to="/" 
@@ -398,78 +1782,164 @@ export default function App() {
                       <div className="p-2 rounded-full border border-border-dark group-hover:border-brand-primary/50 transition-colors">
                         <ArrowLeft className="w-4 h-4" />
                       </div>
-                      <span className="text-xs font-bold uppercase tracking-widest">Exit Dashboard</span>
+                      <span className="text-xs font-bold uppercase tracking-widest">{t('common.back')}</span>
                     </RouterLink>
                   </div>
                   <header>
-                    <h1 className="text-4xl font-display font-bold mb-2">Admin Dashboard</h1>
-                    <p className="text-white/40">Manage your gallery content and structure</p>
+                    <h1 className="text-4xl font-display font-bold mb-2 text-text-main">{t('nav.post') || 'Share a Moment'}</h1>
+                    <p className="text-text-dim/40 uppercase tracking-widest text-[10px] font-bold">Contribute your curated vision to the Aether Sanctuary</p>
                   </header>
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    <div className="lg:col-span-2">
-                      <UploadForm categories={categories} onUpload={handleUploadImage} />
-                    </div>
-                    <div className="lg:col-span-1">
-                      <CategoryManager 
-                        categories={categories} 
-                        onAdd={handleAddCategory} 
-                        onDelete={handleDeleteCategory} 
-                      />
-                    </div>
+                  <div className="max-w-4xl">
+                    <UploadForm 
+                      categories={categories} 
+                      existingImages={images} 
+                      onUpload={handleUploadImage} 
+                      onAddCategory={handleAddCategory}
+                      isAdmin={user.isAdmin} 
+                      onNotify={notify}
+                    />
                   </div>
                 </div>
-              ) : (
-                <div className="pt-32 text-center space-y-4">
-                  <h2 className="text-2xl font-bold">Access Denied</h2>
-                  <p className="text-white/40">You don't have permission to view this page.</p>
-                  <button 
-                    onClick={handleLogout}
-                    className="px-6 py-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors"
-                  >
-                    Logout
-                  </button>
-                </div>
-              )
-            ) : (
-              <div className="pt-40 flex flex-col items-center justify-center space-y-8">
-                <Logo size="xl" />
-                <div className="text-center">
-                  <h2 className="text-4xl font-display font-black mb-2 uppercase tracking-tighter">Aether</h2>
-                  <p className="text-white/40 uppercase tracking-[0.3em] text-[10px] font-bold">The Curated Media Sanctuary</p>
-                </div>
-                <div className="flex flex-col items-center gap-4">
-                  <p className="text-white/20 text-xs font-medium">Sign in to manage your collection</p>
-                  <button 
-                    onClick={handleLogin}
-                    className="px-8 py-4 bg-white text-black font-bold rounded-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-3 shadow-[0_20px_40px_rgba(255,255,255,0.1)]"
-                  >
-                    <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-                    Continue with Google
-                  </button>
-                </div>
-              </div>
-            )
+              ) : <Navigate to="/" replace />}
+            </motion.div>
           } />
 
-          <Route path="*" element={<Navigate to="/" />} />
+          <Route path="/upgrade" element={
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              {user ? <UpgradePage user={user} /> : <Navigate to="/" replace />}
+            </motion.div>
+          } />
+
+          <Route path="/moderation" element={
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              {user?.isAdmin ? <ModerationPage /> : <Navigate to="/" replace />}
+            </motion.div>
+          } />
+
+          <Route path="/about" element={
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+               <AboutPage />
+             </motion.div>
+          } />
+
+          <Route path="/developer" element={
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+               <DeveloperPage user={user} />
+             </motion.div>
+          } />
+
+          <Route path="/admin" element={
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              {user ? (
+                user.isAdmin ? (
+                  <div className="pt-24 md:pt-36 px-4 md:px-8 max-w-7xl mx-auto space-y-6 pb-20">
+                    <div className="flex justify-start">
+                      <RouterLink 
+                        to="/" 
+                        className="flex items-center gap-2 text-text-dim/60 hover:text-text-main transition-colors group"
+                      >
+                        <div className="p-1.5 rounded-full border border-border-dark group-hover:border-brand-primary/30 transition-colors">
+                          <ArrowLeft className="w-3.5 h-3.5" />
+                        </div>
+                        <span className="text-[9px] font-black uppercase tracking-widest">Back</span>
+                      </RouterLink>
+                    </div>
+                    <header className="space-y-1">
+                      <h1 className="text-2xl md:text-3xl font-display font-black text-text-main uppercase tracking-tight">Admin Terminal</h1>
+                      <p className="text-text-dim/40 uppercase tracking-[0.2em] text-[8px] font-bold">Structure management & Content Ingress</p>
+                    </header>
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                      <div className="lg:col-span-3 space-y-6">
+                        <div className="p-4 bg-white/[0.02] border border-border-dark rounded-2xl flex items-center justify-between">
+                           <div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-text-main">Health Monitor</p>
+                              <p className="text-[8px] text-text-dim/40 uppercase tracking-widest mt-0.5">Integrity sync tools</p>
+                           </div>
+                           <button 
+                             onClick={cleanupDuplicates}
+                             className="flex items-center gap-2 px-5 py-2.5 bg-red-500/10 text-red-500 border border-red-500/10 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-red-500/20 transition-all active:scale-95"
+                           >
+                             <Trash2 className="w-3.5 h-3.5" />
+                             Clear All Duplicates
+                           </button>
+                        </div>
+                        <UploadForm 
+                          categories={categories} 
+                          existingImages={images} 
+                          onUpload={handleUploadImage} 
+                          onAddCategory={handleAddCategory}
+                          isAdmin={user.isAdmin} 
+                          onNotify={notify}
+                        />
+                      </div>
+                      <div className="lg:col-span-1">
+                        <CategoryManager 
+                          categories={categories} 
+                          onAdd={handleAddCategory} 
+                          onDelete={handleDeleteCategory} 
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pt-32 text-center space-y-4">
+                    <h2 className="text-2xl font-bold">Access Denied</h2>
+                    <p className="text-text-dim/40">You don't have permission to view this page.</p>
+                    <button 
+                      onClick={handleLogout}
+                      className="px-6 py-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )
+              ) : (
+                <div className="pt-40 flex flex-col items-center justify-center space-y-8">
+                  <Logo size="xl" />
+                  <div className="text-center">
+                    <h2 className="text-4xl font-display font-black mb-2 uppercase tracking-tighter text-text-main">Aether <span className="text-brand-primary italic">Gallery</span></h2>
+                    <p className="text-text-dim/40 uppercase tracking-[0.3em] text-[10px] font-bold">The Curated Media Sanctuary</p>
+                  </div>
+                  <div className="flex flex-col items-center gap-4">
+                    <p className="text-text-dim/40 text-xs font-medium">Sign in to manage your collection</p>
+                    <button 
+                      onClick={handleLogin}
+                      className="px-8 py-4 bg-white text-black font-bold rounded-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-3 shadow-[0_20px_40px_rgba(255,255,255,0.1)]"
+                    >
+                      <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+                      Continue with Google
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+          </motion.div>
+          } />
+
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+      </motion.div>
+    </AnimatePresence>
+  </Suspense>
 
-        <footer className="px-10 py-6 text-xs text-text-dim flex justify-between border-t border-border-dark mt-10">
-          <div>Displaying {filteredImages.length} images</div>
-          <div className="hidden sm:block">Storage: External Cloud Assets (Firestore DB)</div>
-          <div>v2.4.0 • Built with Vite & Firebase</div>
-        </footer>
+        {!isEmbed && (
+          <footer className="px-10 py-6 text-xs text-text-dim flex justify-between border-t border-border-dark mt-10">
+            <div className="mx-auto text-center opacity-40 uppercase tracking-[0.2em] font-black">
+              &copy; {new Date().getFullYear()} Aether Sanctuary • Pure Media Digital Realm
+            </div>
+          </footer>
+        )}
 
-        <ImageModal 
-          image={selectedImage} 
-          onClose={handleCloseModal} 
-          onLike={handleLike}
-          hasLiked={selectedImage ? likedImageIds.has(selectedImage.id) : false}
-          user={user}
-          onNavigate={handleNavigate}
-          hasNext={filteredImages.length > 1}
-          hasPrev={filteredImages.length > 1}
-        />
+        <AnimatePresence>
+          {notification && (
+            <Notification 
+              key="global-notification"
+              message={notification.message}
+              type={notification.type}
+              onClose={() => setNotification(null)}
+            />
+          )}
+        </AnimatePresence>
 
         {savingImage && (
           <CollectionModal 
@@ -478,7 +1948,52 @@ export default function App() {
             onClose={() => setSavingImage(null)} 
           />
         )}
+
+        <AnimatePresence>
+          {deferredPrompt && !isInstallDismissed && (
+            <motion.div
+              key="pwa-install-banner"
+              initial={{ opacity: 0, y: 100, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 100, scale: 0.9 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 150 }}
+              className="fixed bottom-6 right-6 z-[100] max-w-sm p-5 bg-card-dark/95 backdrop-blur-xl border border-white/10 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.7)] flex flex-col gap-4 text-white"
+            >
+              <div className="flex gap-3 items-start">
+                <div className="p-3 bg-brand-primary/10 border border-brand-primary/20 rounded-2xl text-brand-primary shrink-0">
+                  <Download className="w-6 h-6 animate-bounce" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="font-display font-bold text-sm tracking-wide text-text-main">
+                    Install Aether Gallery
+                  </h4>
+                  <p className="text-[11px] text-text-dim leading-relaxed font-medium">
+                    Add Aether to your home screen or desktop for an immersive full-screen visual sanctuary and offline media access.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2.5 justify-end">
+                <button
+                  onClick={() => {
+                    localStorage.setItem('pwa-install-banner-dismissed', 'true');
+                    setIsInstallDismissed(true);
+                  }}
+                  className="px-4 py-2 bg-white/[0.03] hover:bg-white/5 border border-white/5 hover:border-white/10 text-white/80 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  Dismiss
+                </button>
+                <button
+                  onClick={() => {
+                    handleInstallClick();
+                  }}
+                  className="px-4 py-2 bg-brand-primary text-white hover:bg-brand-primary/90 font-black uppercase tracking-widest text-[10px] rounded-xl shadow-lg shadow-brand-primary/20 transition-all flex items-center gap-1.5"
+                >
+                  Install App
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-    </Router>
   );
 }

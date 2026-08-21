@@ -1,8 +1,9 @@
-import { Heart, Share2, ZoomIn, AlertCircle, Play, Sparkles, Download, BookmarkPlus } from 'lucide-react';
-import { motion } from 'motion/react';
-import React, { useState } from 'react';
-import { cn } from '../../lib/utils';
+import { Heart, Share2, ZoomIn, AlertCircle, Play, Sparkles, Download, BookmarkPlus, User as UserIcon, Layers, Volume2, VolumeX, Check, Music, Headphones } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { cn, copyToClipboard } from '../../lib/utils';
 import { Image, User } from '../../types';
+import { trackActivity } from '../../lib/recommendation';
 
 interface ImageCardProps {
   image: Image;
@@ -11,31 +12,469 @@ interface ImageCardProps {
   onLike: (e: React.MouseEvent, image: Image) => void;
   onSave?: (e: React.MouseEvent, image: Image) => void;
   hasLiked: boolean;
-  key?: React.Key;
+  isSaved?: boolean;
+  isFeatured?: boolean;
+  index?: number;
+  isSelectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (image: Image) => void;
+  onStartSelectMode?: (image: Image) => void;
 }
 
-export default function ImageCard({ image, user, onClick, onLike, onSave, hasLiked }: ImageCardProps) {
+const HeartBubble = ({ x, y, onComplete }: { x: number, y: number, onComplete: () => void, key?: React.Key }) => (
+  <motion.div
+    initial={{ opacity: 1, scale: 0.5, x: 0, y: 0 }}
+    animate={{ 
+      opacity: 0, 
+      scale: 1.5, 
+      x: (Math.random() - 0.5) * 100, 
+      y: -150 - Math.random() * 50 
+    }}
+    exit={{ opacity: 0 }}
+    onAnimationComplete={onComplete}
+    className="absolute pointer-events-none z-50 text-red-500"
+    style={{ left: x, top: y }}
+  >
+    <Heart className="w-6 h-6 fill-current shadow-xl" />
+  </motion.div>
+);
+
+const getFileType = (img: Image) => {
+  if (img.type === 'video') {
+    if (/youtube\.com|youtu\.be/i.test(img.url)) return 'YouTube Video';
+    const match = img.url.match(/\.([a-zA-Z0-9]+)(?:[?#]|$)/);
+    return match ? match[1].toUpperCase() : 'MP4';
+  }
+  const match = img.url.match(/\.([a-zA-Z0-9]+)(?:[?#]|$)/);
+  const ext = match ? match[1].toUpperCase() : 'JPEG';
+  return ['PNG', 'JPG', 'JPEG', 'WEBP', 'GIF', 'AVIF', 'SVG'].includes(ext) ? ext : 'JPEG';
+};
+
+const getResolution = (img: Image) => {
+  const seed = img.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const aspect = img.aspectRatio || 'landscape';
+  if (aspect === 'portrait') {
+    const options = ['1080 x 1920', '1440 x 2560', '1200 x 1600'];
+    return options[seed % options.length];
+  } else if (aspect === 'square') {
+    const options = ['1080 x 1080', '2048 x 2048', '1200 x 1200'];
+    return options[seed % options.length];
+  } else if (aspect === 'ultrawide') {
+    const options = ['2560 x 1080', '3440 x 1440', '3840 x 1600'];
+    return options[seed % options.length];
+  } else {
+    const options = ['1920 x 1080', '2560 x 1440', '3840 x 2160', '1600 x 1200'];
+    return options[seed % options.length];
+  }
+};
+
+export default React.memo(function ImageCard({ 
+  image, 
+  user, 
+  onClick, 
+  onLike, 
+  onSave, 
+  hasLiked, 
+  isSaved, 
+  isFeatured, 
+  index = 0,
+  isSelectMode = false,
+  isSelected = false,
+  onToggleSelect,
+  onStartSelectMode
+}: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [bubbles, setBubbles] = useState<{ id: string, x: number, y: number }[]>([]);
+  const [showHeartPop, setShowHeartPop] = useState(false);
+  const [lastTap, setLastTap] = useState(0);
+  const [naturalRatio, setNaturalRatio] = useState<number | null>(null);
 
   const shouldBlur = image.isPremium && !user?.isPremium && !image.isSample;
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const [isInViewport, setIsInViewport] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isVideoActive, setIsVideoActive] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // videos are on mute mode by default
+
+  const [holdProgress, setHoldProgress] = useState(0);
+  const holdStartTimestamp = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const hasTriggeredLongPress = useRef(false);
+  const touchStartPos = useRef<{ x: number, y: number } | null>(null);
+
+  const isDirectVideo = /\.(mp4|webm|ogg|mov)$/i.test(image.url);
+  const isYoutube = /youtube\.com|youtu\.be/i.test(image.url);
+  const isYoutubeShort = isYoutube && image.url.toLowerCase().includes('/shorts/');
+
+  // Robust check for portrait content (either from database or inferred from url characteristics)
+  const isInferredPortrait = image.aspectRatio === 'portrait' || 
+                             isYoutubeShort || 
+                             /portrait|vertical|reel|tiktok|9-16|9_16|9x16/i.test(image.url);
+                             
+  const finalRatio = isInferredPortrait ? 'portrait' : (image.aspectRatio || 'landscape');
+
+  const shouldRenderVideo = isPlaying && !shouldBlur;
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const getCardYoutubeEmbedUrl = (url: string) => {
+    const ytMatch = url.match(/(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|shorts\/|watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+    if (!ytMatch) return '';
+    const videoId = ytMatch[1];
+    return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=${isMuted ? 1 : 0}&enablejsapi=1&controls=0&loop=1&playlist=${videoId}`;
+  };
+
+  useEffect(() => {
+    if (image.type !== 'video' || (!isDirectVideo && !isYoutube)) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        setIsInViewport(entry.isIntersecting);
+        // If the item scrolls out of the viewport, stop playing
+        if (!entry.isIntersecting) {
+          setIsPlaying(false);
+          setHoldProgress(0);
+        }
+      });
+    }, {
+      threshold: 0.1
+    });
+
+    const currentEl = containerRef.current;
+    if (currentEl) {
+      observer.observe(currentEl);
+    }
+
+    return () => {
+      if (currentEl) {
+        observer.unobserve(currentEl);
+      }
+    };
+  }, [image.type, image.url, isDirectVideo, isYoutube]);
+
+  // Coordinate playing state: pause other videos when a new one starts playing
+  useEffect(() => {
+    const handleGlobalPlay = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail && customEvent.detail.imageId !== image.id) {
+        setIsPlaying(false);
+      }
+    };
+
+    window.addEventListener('aether_play_video', handleGlobalPlay);
+    return () => {
+      window.removeEventListener('aether_play_video', handleGlobalPlay);
+    };
+  }, [image.id]);
+
+  // Coordinate muting state: mute other videos when one becomes unmuted
+  useEffect(() => {
+    const handleGlobalUnmute = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail && customEvent.detail.imageId !== image.id) {
+        setIsMuted(true);
+      }
+    };
+
+    window.addEventListener('aether_unmute_video', handleGlobalUnmute);
+    return () => {
+      window.removeEventListener('aether_unmute_video', handleGlobalUnmute);
+    };
+  }, [image.id]);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    
+    if (isPlaying) {
+      const playPromise = videoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          console.warn("Playback delayed or prevented:", error);
+        });
+      }
+    } else {
+      videoRef.current.pause();
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
+
+  // Control YouTube embedding mute/play states dynamically via postMessage
+  useEffect(() => {
+    if (isYoutube && iframeRef.current && iframeRef.current.contentWindow) {
+      try {
+        const command = isMuted ? 'mute' : 'unMute';
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({
+          event: 'command',
+          func: command
+        }), '*');
+
+        const playCommand = isPlaying ? 'playVideo' : 'pauseVideo';
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({
+          event: 'command',
+          func: playCommand
+        }), '*');
+      } catch (e) {
+        console.warn("Could not post message to YouTube iframe:", e);
+      }
+    }
+  }, [isMuted, isPlaying, isYoutube]);
+
+  const playVideoInstantly = () => {
+    if (image.type !== 'video' || (!isDirectVideo && !isYoutube) || shouldBlur) return;
+    if (!isPlaying) {
+      setIsPlaying(true);
+      window.dispatchEvent(new CustomEvent('aether_play_video', { detail: { imageId: image.id } }));
+    }
+  };
+
+  const singleTapTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startHold = (e: React.MouseEvent | React.TouchEvent) => {
+    const isAdminLongPress = user?.isAdmin && !isSelectMode;
+    const isVideoHold = image.type === 'video' && !isAdminLongPress;
+    
+    if (!isAdminLongPress && !isVideoHold) return;
+
+    if ('touches' in e && e.touches[0]) {
+      touchStartPos.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY
+      };
+    } else {
+      touchStartPos.current = null;
+    }
+
+    hasTriggeredLongPress.current = false;
+    setHoldProgress(0);
+    holdStartTimestamp.current = Date.now();
+
+    const updateProgress = () => {
+      if (!holdStartTimestamp.current) return;
+      const elapsed = Date.now() - holdStartTimestamp.current;
+      const targetTime = isAdminLongPress ? 1200 : 1000; // 1.2s for admin hold select to prevent accidents
+      const progress = Math.min((elapsed / targetTime) * 100, 100);
+      setHoldProgress(progress);
+
+      if (elapsed < targetTime) {
+        animationFrameRef.current = requestAnimationFrame(updateProgress);
+      } else {
+        hasTriggeredLongPress.current = true;
+        if (isAdminLongPress) {
+          if (onStartSelectMode) {
+            onStartSelectMode(image);
+          }
+          setHoldProgress(0);
+          holdStartTimestamp.current = null;
+        } else if (isVideoHold) {
+          playVideoInstantly();
+          setHoldProgress(0);
+          holdStartTimestamp.current = null;
+        }
+      }
+    };
+
+    animationFrameRef.current = requestAnimationFrame(updateProgress);
+  };
+
+  const cancelHold = () => {
+    if (holdStartTimestamp.current) {
+      holdStartTimestamp.current = null;
+    }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    setHoldProgress(0);
+  };
+
+  const checkTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartPos.current || !e.touches[0]) return;
+    const dx = Math.abs(e.touches[0].clientX - touchStartPos.current.x);
+    const dy = Math.abs(e.touches[0].clientY - touchStartPos.current.y);
+    if (dx > 5 || dy > 5) {
+      cancelHold();
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setIsHovered(false);
+    setIsVideoActive(false);
+    cancelHold();
+  };
+
+  const toggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    if (!nextMuted) {
+      window.dispatchEvent(new CustomEvent('aether_unmute_video', { detail: { imageId: image.id } }));
+    }
+  };
+
+  const handleLike = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    setBubbles(prev => [...prev, { id: `card-bubble-btn-${Math.random().toString(36).substr(2, 9)}-${Date.now()}-${prev.length}`, x, y }]);
+    onLike(e, image);
+  };
+
+  const handleImageClick = (e: React.MouseEvent) => {
+    if (isSelectMode) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (onToggleSelect) {
+        onToggleSelect(image);
+      }
+      return;
+    }
+
+    if (hasTriggeredLongPress.current) {
+      hasTriggeredLongPress.current = false;
+      return;
+    }
+
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 280;
+    
+    if (now - lastTap < DOUBLE_TAP_DELAY) {
+      // Double tap detected: ONLY LIKE, cancel single tap opening
+      if (singleTapTimerRef.current) {
+        clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      setLastTap(0);
+      setShowHeartPop(true);
+      setTimeout(() => setShowHeartPop(false), 800);
+      
+      if (!hasLiked) {
+        onLike(e, image);
+        const rect = containerRef.current?.getBoundingClientRect();
+        const x = rect ? e.clientX - rect.left : 100;
+        const y = rect ? e.clientY - rect.top : 100;
+        setBubbles(prev => [...prev, { 
+          id: `card-bubble-tap-${Math.random().toString(36).substr(2, 9)}-${Date.now()}-${prev.length}`, 
+          x, 
+          y 
+        }]);
+      }
+    } else {
+      setLastTap(now);
+      if (singleTapTimerRef.current) {
+        clearTimeout(singleTapTimerRef.current);
+      }
+      singleTapTimerRef.current = setTimeout(() => {
+        onClick(image);
+        singleTapTimerRef.current = null;
+      }, 280);
+    }
+  };
+
   const handleShare = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    try {
-      const shareUrl = `${window.location.origin}/?id=${image.id}`;
+    
+    if (shouldBlur) {
+      alert("Aether Protocol: Sharing restricted for premium assets. Please upgrade to Divine Curator status.");
+      return;
+    }
+    
+    const shareUrl = `${window.location.origin}/?post=${image.id}`;
+    const originalHostingLink = image.externalLink || 
+      (image.url && image.url.startsWith('http') && !image.url.includes('firebasestorage') && !image.url.includes('blob:') ? image.url : null);
+
+    const isYoutubeOnly = /youtube\.com|youtu\.be/i.test(image.url) || 
+      (originalHostingLink ? /youtube\.com|youtu\.be/i.test(originalHostingLink) : false);
+
+    let shareText = `✨ Aether Sanctuary – Manifestation of Vision ✨\n\n` +
+      `🌌 Title: ${image.title}\n` +
+      (image.description ? `🌿 Description: ${image.description}\n` : '') +
+      (image.category ? `🏷️ Category: ${image.category}\n` : '') +
+      (image.uploaderName ? `✍️ Curated by: ${image.uploaderName}\n` : '');
+
+    if (originalHostingLink) {
+      shareText += `🌐 Original Hosting Source: ${originalHostingLink}\n`;
+    }
+
+    shareText += `🔗 View post in app: ${shareUrl}\n\n` +
+      `Join the Aether digital gallery, an aesthetic sanctuary for high-resolution vision and design exploration. Let's create together!\n` +
+      `👉 ${window.location.origin}`;
+
+    const shareData: ShareData = {
+      title: image.title,
+      text: shareText,
+      url: shareUrl,
+    };
+
+    if (user) trackActivity(user.uid, [image.category, ...image.tags], 'share');
+
+    // 1. YouTube-only videos: Share hosting link and Aether message only (skip binary blob fetch)
+    if (isYoutubeOnly) {
       if (navigator.share) {
-        await navigator.share({
-          title: image.title,
-          text: image.description,
-          url: shareUrl,
-        });
-      } else {
-        await navigator.clipboard.writeText(shareUrl);
-        alert('Link copied to clipboard!');
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (err) {
+          console.warn("YouTube share canceled or unsupported:", err);
+        }
       }
-    } catch (err) {
-      console.error('Sharing failed:', err);
+      const success = await copyToClipboard(`${shareText}\n${shareUrl}`);
+      if (success) {
+        alert("YouTube post link and hosting details copied to clipboard!");
+      }
+      return;
+    }
+
+    // 2. Try file sharing with media file (image or video file) + unique post link + hosting source
+    const targetMedia = image.url || image.thumbnailUrl;
+    if (targetMedia) {
+      try {
+        const response = await fetch(targetMedia);
+        if (response.ok) {
+          const blob = await response.blob();
+          const ext = blob.type.split('/')[1] || (image.type === 'video' ? 'mp4' : 'jpg');
+          const cleanTitle = image.title.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const file = new File([blob], `${cleanTitle}_Aether.${ext}`, { type: blob.type });
+
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              ...shareData,
+              files: [file],
+            });
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Media share file fetch failed, falling back to link/text share:", err);
+      }
+    }
+
+    // 3. Fallback: Generic Navigator Share
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch (err) {
+        console.warn("Navigator share failed:", err);
+      }
+    }
+
+    // 4. Absolute Fallback: Clipboard
+    const success = await copyToClipboard(`${shareText}\n${shareUrl}`);
+    if (success) {
+      alert("Unique post link, hosting source, and curation details copied to clipboard!");
+    } else {
+      console.warn("Clipboard fallback failed.");
     }
   };
 
@@ -62,162 +501,358 @@ export default function ImageCard({ image, user, onClick, onLike, onSave, hasLik
     }
   };
 
+  const getOptimizedUrl = (url: string, width = 500) => {
+    if (!url) return url;
+    // General quality and format optimization for all URLs if they support standard params or known CDNs
+    if (url.includes('cloudinary.com')) {
+      if (url.includes('/upload/')) {
+        return url.replace('/upload/', `/upload/q_auto,f_auto,w_${width},c_limit/`);
+      }
+    }
+    
+    if (url.includes('images.unsplash.com')) {
+      if (url.includes('?')) {
+        try {
+          const baseUrl = url.split('?')[0];
+          const params = new URLSearchParams(url.split('?')[1]);
+          params.set('w', width.toString());
+          params.set('q', '75');
+          params.set('auto', 'format');
+          return `${baseUrl}?${params.toString()}`;
+        } catch {
+          return `${url}&w=${width}&q=75&auto=format`;
+        }
+      } else {
+        return `${url}?auto=format&fit=crop&w=${width}&q=75`;
+      }
+    }
+
+    if (url.includes('picsum.photos')) {
+      const height = Math.round(width * 0.75);
+      return url.replace(/\/\d+\/\d+$/, `/${width}/${height}`);
+    }
+    
+    // Fallback for placeholder or missing image signals (optional)
+    if (!url.startsWith('http')) return `https://picsum.photos/seed/${image.id}/${width}/${Math.round(width * 0.75)}`;
+
+    return url;
+  };
+
+  // Robust uploader metadata with deep fallbacks
+  const uploaderName = image.uploaderName || image.uploaderEmail?.split('@')[0] || 'Aether Resident';
+  const uploaderPhoto = image.uploaderPhotoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${image.userId || image.id}`;
+  
   return (
     <motion.div
+      ref={containerRef}
       layout
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="relative mb-5 group cursor-pointer break-inside-avoid bg-card-dark border border-border-dark rounded-2xl overflow-hidden hover:border-brand-primary/50 transition-colors"
-      onClick={() => onClick(image)}
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ 
+        y: isSelectMode ? 0 : -4,
+        transition: { duration: 0.2, ease: "easeOut" }
+      }}
+      whileTap={{ scale: isSelectMode ? 0.97 : 0.98 }}
+      onMouseEnter={() => {
+        setIsHovered(true);
+        if (image.type === 'video') {
+          playVideoInstantly();
+        }
+      }}
+      onMouseLeave={handleMouseLeave}
+      onMouseDown={startHold}
+      onMouseUp={cancelHold}
+      onTouchStart={startHold}
+      onTouchEnd={cancelHold}
+      onTouchCancel={cancelHold}
+      onTouchMove={checkTouchMove}
+      className={cn(
+        "relative group cursor-pointer break-inside-avoid rounded-xl overflow-hidden transition-all duration-300 shadow-[0_4px_20px_rgba(0,0,0,0.2)] hover:shadow-[0_20px_40px_rgba(0,0,0,0.4)] w-full max-w-full masonry-item bg-bg-dark/20 select-none",
+        isFeatured ? "rounded-[24px]" : "",
+        isSelectMode ? "ring-2" : "border border-white/5",
+        isSelectMode && isSelected 
+          ? "ring-brand-primary border-brand-primary bg-brand-primary/[0.04] scale-[0.98]" 
+          : isSelectMode 
+            ? "ring-white/10 hover:ring-white/25 scale-[0.99]" 
+            : ""
+      )}
+      onClick={handleImageClick}
     >
-      <div className={cn(
-        "relative overflow-hidden bg-bg-dark transition-all duration-500",
-        !isLoaded ? "aspect-[3/4] animate-pulse" : ""
-      )}>
+      <div 
+        className={cn(
+          "relative overflow-hidden bg-white/[0.01] transition-colors duration-500 w-full",
+          !isLoaded ? (finalRatio === 'portrait' ? "aspect-[9/16] skeleton" : isYoutube ? "aspect-video skeleton" : "aspect-[3/4] skeleton") : "",
+          isFeatured ? "aspect-video" : "",
+          !naturalRatio && (
+            finalRatio === 'portrait' ? "aspect-[9/16]" : 
+            isYoutube ? "aspect-video" : 
+            finalRatio === 'landscape' ? "aspect-video" : 
+            finalRatio === 'square' ? "aspect-square" : 
+            finalRatio === 'ultrawide' ? "aspect-[21/9]" : "aspect-[3/4]"
+          )
+        )}
+        style={naturalRatio ? { aspectRatio: `${naturalRatio}` } : undefined}
+      >
+        <AnimatePresence>
+          {showHeartPop && (
+            <motion.div 
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ 
+                scale: [0, 1.2, 1], 
+                opacity: [0, 1, 1],
+              }}
+              transition={{ duration: 0.4, ease: "backOut" }}
+              exit={{ scale: 1.5, opacity: 0 }}
+              className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none"
+            >
+              <Heart className="w-20 h-20 text-red-500 fill-current drop-shadow-[0_0_30px_rgba(239,68,68,0.6)]" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {isSelectMode && (
+          <div className="absolute top-3 left-3 z-[41] pointer-events-none select-none">
+            {isSelected ? (
+              <div className="w-6 h-6 rounded-full bg-brand-primary flex items-center justify-center border border-black/20 text-bg-dark shadow-[0_2px_8px_rgba(0,0,0,0.4)] animate-in zoom-in duration-200">
+                <Check className="w-3.5 h-3.5 stroke-[4]" />
+              </div>
+            ) : (
+              <div className="w-6 h-6 rounded-full border-2 border-white/60 bg-black/40 backdrop-blur-[2px] transition-all hover:border-white shadow-[0_2px_8px_rgba(0,0,0,0.4)]" />
+            )}
+          </div>
+        )}
+
+        {holdProgress > 0 && holdProgress < 100 && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center z-30 transition-all duration-150">
+            <div className="relative w-14 h-14 flex items-center justify-center">
+              <svg className="absolute w-full h-full transform -rotate-90">
+                <circle
+                  cx="28"
+                  cy="28"
+                  r="24"
+                  stroke="rgba(255, 255, 255, 0.1)"
+                  strokeWidth="3"
+                  fill="transparent"
+                />
+                <circle
+                  cx="28"
+                  cy="28"
+                  r="24"
+                  stroke="var(--color-brand-primary, #ffd700)"
+                  strokeWidth="3"
+                  fill="transparent"
+                  strokeDasharray={`${2 * Math.PI * 24}`}
+                  strokeDashoffset={`${2 * Math.PI * 24 * (1 - holdProgress / 100)}`}
+                />
+              </svg>
+              {user?.isAdmin && !isSelectMode ? (
+                <Check className="w-4 h-4 text-white animate-pulse" />
+              ) : (
+                <Play className="w-4 h-4 fill-current text-white animate-pulse" />
+              )}
+            </div>
+            <span className="text-[8px] font-black uppercase tracking-[0.2em] text-white/90 mt-3 selection:bg-transparent">
+              {user?.isAdmin && !isSelectMode ? 'Hold to Select...' : 'Hold to Preview...'}
+            </span>
+          </div>
+        )}
+ 
+        {/* Low-resolution blur-up loading placeholder */}
+        {!isLoaded && !shouldBlur && (
+          <img
+            src={getOptimizedUrl(image.type === 'video' ? (image.thumbnailUrl || image.url) : image.url, 20)}
+            alt=""
+            aria-hidden="true"
+            onError={(e) => {
+              const target = e.target as HTMLImageElement;
+              target.src = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg' viewBox%3D'0 0 300 400'%3E%3Crect width%3D'100%25' height%3D'100%25' fill%3D'%231c1c1e'%2F%3E%3C%2Fsvg%3E";
+            }}
+            className="w-full h-full object-cover absolute inset-0 blur-xl scale-110 opacity-80 pointer-events-none transition-opacity duration-500"
+          />
+        )}
+
         <img
-          src={image.type === 'video' ? (image.thumbnailUrl || `https://picsum.photos/seed/${image.id}/800/600?blur=4`) : image.url}
+          src={getOptimizedUrl(image.type === 'video' ? (image.thumbnailUrl || `https://picsum.photos/seed/${image.id}/800/600?blur=4`) : image.url)}
           alt={image.title}
-          loading="lazy"
+          loading={index < 4 ? "eager" : "lazy"}
+          decoding="async"
           referrerPolicy="no-referrer"
-          onLoad={() => setIsLoaded(true)}
+          onLoad={(e) => {
+            const img = e.currentTarget;
+            if (img.naturalWidth && img.naturalHeight) {
+              setNaturalRatio(img.naturalWidth / img.naturalHeight);
+            }
+            setIsLoaded(true);
+          }}
           onError={(e) => {
             const target = e.target as HTMLImageElement;
             target.src = 'https://picsum.photos/seed/broken/800/600?blur=4';
-            const parent = target.parentElement;
-            if (parent) {
-              const overlay = parent.querySelector('.broken-overlay');
-              if (overlay) overlay.classList.remove('hidden');
-            }
+            setIsLoaded(true);
           }}
           className={cn(
-            "w-full h-auto object-cover transition-transform duration-700 group-hover:scale-110",
+            "w-full h-full object-cover transition-all duration-700 ease-out transform-gpu absolute inset-0",
             isLoaded ? "opacity-100" : "opacity-0",
-            shouldBlur && "blur-xl scale-125 opacity-50"
+            shouldBlur ? "blur-2xl scale-110 opacity-60" : "group-hover:scale-105"
           )}
         />
 
-        {/* Action Overlays */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 opacity-0 md:group-hover:opacity-100 lg:group-hover:opacity-100 transition-opacity duration-300">
-          {/* Top Actions */}
-          <div className="absolute top-3 right-3 flex flex-col gap-2">
-            <button 
-              onClick={handleShare}
-              className="p-2.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white hover:bg-brand-primary transition-all"
-              title="Share"
-            >
-              <Share2 className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={(e) => { e.stopPropagation(); onSave?.(e, image); }}
-              className="p-2.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white hover:bg-brand-primary transition-all"
-              title="Save to Collection"
-            >
-              <BookmarkPlus className="w-4 h-4" />
-            </button>
-            {!shouldBlur && (
-               <button 
-                onClick={handleDownload}
-                disabled={isDownloading}
-                className="p-2.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white hover:bg-brand-primary transition-all disabled:opacity-50"
-                title="Download"
-              >
-                {isDownloading ? (
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <Download className="w-4 h-4" />
-                )}
-              </button>
+        {image.type === 'video' && isDirectVideo && shouldRenderVideo && (
+          <video
+            ref={videoRef}
+            src={image.url}
+            poster={image.thumbnailUrl || undefined}
+            muted={isMuted}
+            playsInline
+            loop
+            className={cn(
+              "w-full h-full object-cover absolute inset-0 transition-all duration-700 ease-out transform-gpu z-10 group-hover:scale-105",
+              isVideoActive ? "opacity-100" : "opacity-0"
             )}
-          </div>
+            onLoadedMetadata={(e) => {
+              const video = e.currentTarget;
+              if (video.videoWidth && video.videoHeight) {
+                setNaturalRatio(video.videoWidth / video.videoHeight);
+              }
+            }}
+            onCanPlay={() => setIsVideoActive(true)}
+          />
+        )}
 
-          <div className="absolute top-3 left-3">
-             <div className="p-2 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white">
-                <ZoomIn className="w-4 h-4" />
-             </div>
-          </div>
-        </div>
+        {image.type === 'video' && isYoutube && shouldRenderVideo && (
+          <iframe
+            ref={iframeRef}
+            src={getCardYoutubeEmbedUrl(image.url)}
+            allow="autoplay; encrypted-media"
+            title={image.title}
+            className="w-full h-full object-cover absolute inset-0 border-0 z-10 pointer-events-none transition-all duration-700 ease-out transform-gpu group-hover:scale-105"
+          />
+        )}
 
-        {image.isPremium && (
-          <div className="absolute top-3 left-3 z-10">
-            <div className={cn(
-              "flex items-center gap-1.5 px-3 py-1 rounded-lg border text-[10px] font-extrabold uppercase tracking-widest backdrop-blur-md",
-              image.isSample 
-                ? "bg-green-500/20 border-green-500/40 text-green-400" 
-                : "bg-amber-500/20 border-amber-500/40 text-amber-400"
-            )}>
+        {/* Floating Type Icon */}
+        {image.type === 'video' && (
+          <div className="absolute top-2 left-2 flex items-center gap-1.5 z-20">
+            <div className="p-1.5 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 text-white flex items-center justify-center">
+              <Play className="w-3.5 h-3.5 fill-current" />
+            </div>
+          </div>
+        )}
+
+        {/* Floating Actions on Top Right - Includes premium indication & preview trigger */}
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 z-40">
+          {image.isPremium && (
+            <div className="p-1 rounded-md bg-brand-primary/40 backdrop-blur-md border border-brand-primary/20 text-white flex items-center justify-center">
               <Sparkles className="w-3 h-3" />
-              {image.isSample ? "Sample" : "Premium"}
             </div>
-          </div>
-        )}
-
-        {shouldBlur && (
-          <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
-            <div className="space-y-2">
-              <Sparkles className="w-8 h-8 text-amber-400 mx-auto opacity-80" />
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-white">Unlock Premium</p>
-            </div>
-          </div>
-        )}
-
-        {image.type === 'video' && !shouldBlur && (
-           <div className="absolute inset-0 flex items-center justify-center">
-              <div className="p-4 rounded-full bg-brand-primary/20 backdrop-blur-md border border-brand-primary/40 text-brand-primary shadow-[0_0_30px_rgba(242,125,38,0.3)] group-hover:scale-110 transition-transform">
-                 <Play className="w-6 h-6 fill-current" />
-              </div>
-           </div>
-        )}
-
-        {/* Broken link indicator */}
-        <div className="broken-overlay hidden absolute inset-0 bg-red-500/10 backdrop-blur-sm flex items-center justify-center p-4">
-           <div className="flex flex-col items-center gap-1.5 opacity-60">
-              <AlertCircle className="w-6 h-6 text-red-400" />
-              <span className="text-[9px] font-extrabold uppercase tracking-widest text-red-200">Invalid Source</span>
-           </div>
-        </div>
-        
-        {/* Subtle Overlay on Image */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-
-        {/* Zoom Icon - Always visible on mobile, hover on desktop */}
-        <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 lg:opacity-0 transition-opacity md:group-hover:opacity-100 lg:group-hover:opacity-100">
-          <div className="p-2 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white">
-            <ZoomIn className="w-4 h-4" />
-          </div>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onClick(image);
+            }}
+            className="p-1.5 rounded-md bg-black/50 backdrop-blur-md border border-white/15 text-brand-primary hover:bg-brand-primary hover:text-bg-dark transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 pointer-events-auto shadow-md"
+            title="Preview Fullscreen"
+          >
+            <ZoomIn className="w-3 h-3" />
+          </button>
         </div>
       </div>
 
-      <div className="p-4 flex justify-between items-center bg-card-dark">
-        <div className="flex-1 min-w-0 pr-2">
-            <h3 className="text-sm font-bold text-white truncate leading-tight mb-0.5">{image.title}</h3>
-            <span className="text-[10px] font-extrabold text-brand-primary uppercase tracking-wider opacity-80">{image.category}</span>
-        </div>
-        <div className="flex items-center gap-2">
-            {/* Quick Actions (Mobile fallback or consistent access) */}
-            <div className="flex md:hidden items-center gap-1.5 mr-2">
-                <button 
-                  onClick={handleShare}
-                  className="p-1.5 text-text-dim hover:text-white"
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                </button>
+      {/* Dedicated compact/minimized line connected to the post */}
+      <div 
+        className={cn(
+          "flex items-center justify-between px-3 py-2 bg-black/40 border-t border-white/5 select-none text-[10px] gap-2"
+        )}
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
+      >
+        {/* Left: Minimized Uploader info / Category */}
+        <div 
+          className={cn(
+            "flex items-center gap-1.5 min-w-0 hover:opacity-80 transition-opacity cursor-pointer",
+            isSelectMode && "pointer-events-none opacity-40"
+          )}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (image.userId) window.location.href = `/profile/${image.userId}`;
+          }}
+        >
+          {uploaderPhoto ? (
+            <img src={uploaderPhoto} alt="" referrerPolicy="no-referrer" className="w-4 h-4 rounded-full border border-white/10 shrink-0 object-cover" />
+          ) : (
+            <div className="w-4 h-4 rounded-full bg-white/5 flex items-center justify-center border border-white/5 shrink-0">
+              <UserIcon className="w-1.5 h-1.5 text-text-dim/40" />
             </div>
-            
-            <button 
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onLike(e, image);
-                }}
-                className={cn(
-                    "w-10 h-10 flex items-center justify-center rounded-full transition-all active:scale-90",
-                    hasLiked ? "bg-red-500/10 text-red-500" : "bg-white/5 text-text-dim hover:text-red-400"
-                )}
-            >
-                <Heart className={cn("w-4.5 h-4.5", hasLiked && "fill-current")} />
-            </button>
-            <span className="text-xs font-bold text-text-main tabular-nums">{image.likes >= 1000 ? (image.likes / 1000).toFixed(1) + 'k' : image.likes}</span>
+          )}
+          <div className="flex flex-col min-w-0 leading-tight">
+            <span className="text-[8px] font-semibold tracking-wider text-white/90 truncate max-w-[65px]">
+              {uploaderName}
+            </span>
+            <span className="text-[7px] font-bold text-brand-primary/80 uppercase tracking-widest truncate max-w-[65px]">
+              {image.category}
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Minimized Icons in a dedicated line */}
+        <div className="flex items-center gap-2.5 shrink-0 text-white/60">
+          {/* Like Button with Count */}
+          <button 
+            onClick={handleLike}
+            className={cn(
+              "flex items-center gap-1 hover:text-red-400 transition-colors active:scale-75",
+              hasLiked ? "text-red-500 hover:text-red-600" : "text-white/60 hover:text-white",
+              isSelectMode && "pointer-events-none opacity-40"
+            )}
+            title="Like"
+          >
+            <Heart className={cn("w-3.5 h-3.5", hasLiked && "fill-current")} />
+            <span className="text-[9px] font-bold tabular-nums">
+              {image.likes || 0}
+            </span>
+          </button>
+
+          {/* Registry (Share) */}
+          <button 
+            onClick={handleShare}
+            className={cn(
+              "p-0.5 hover:text-brand-primary transition-colors active:scale-75 text-white/60 hover:text-white",
+              isSelectMode && "pointer-events-none opacity-40"
+            )}
+            title="Registry (Share)"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Save (Collection) */}
+          <button 
+            onClick={(e) => { e.stopPropagation(); onSave?.(e, image); }}
+            className={cn(
+              "p-0.5 hover:text-brand-primary transition-colors active:scale-75 text-white/60 hover:text-white",
+              isSaved ? "text-brand-primary hover:text-brand-primary/80" : "text-white/60 hover:text-white",
+              isSelectMode && "pointer-events-none opacity-40"
+            )}
+            title="Save to Collection"
+          >
+            <BookmarkPlus className={cn("w-3.5 h-3.5", isSaved && "fill-current")} />
+          </button>
+
+          {/* Download */}
+          <button 
+            onClick={handleDownload}
+            disabled={isDownloading}
+            className={cn(
+              "p-0.5 hover:text-brand-primary transition-colors active:scale-75 text-white/60 hover:text-white disabled:opacity-50",
+              isDownloading && "text-brand-primary animate-pulse",
+              isSelectMode && "pointer-events-none opacity-40"
+            )}
+            title="Download"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
     </motion.div>
   );
-}
+});

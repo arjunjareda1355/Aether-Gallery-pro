@@ -1,265 +1,447 @@
-import { Search, Menu, User, PlusCircle, LogOut, X, Shield, Bookmark, UserCircle, Sparkles, Download } from 'lucide-react';
-import React, { useState } from 'react';
+import { Search, Menu, User, PlusCircle, LogOut, X, Shield, Info, UserCircle, Sparkles, Download, Palette, Filter, ChevronDown, Activity, Globe } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { cn } from '../../lib/utils';
-import { User as UserType } from '../../types';
+import { motion, AnimatePresence } from 'motion/react';
+import { useTranslation } from 'react-i18next';
+import { cn, useBodyScrollLock } from '../../lib/utils';
+import { User as UserType, Category } from '../../types';
 import Logo from './Logo';
+import ThemeSelector from './ThemeSelector';
+import LanguageSelector from './LanguageSelector';
+import CategoryMenu from '../gallery/CategoryMenu';
+import { useClickOutside } from '../../lib/useClickOutside';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db, COLLECTIONS } from '../../lib/firebase';
 
 interface NavbarProps {
+  searchQuery: string;
   onSearch: (query: string) => void;
   isAdmin: boolean;
   user: UserType | null;
   onLogout: () => void;
   onLogin: () => void;
   onInstall?: () => void;
+  recommendations?: string[];
+  // New props for unified filters
+  categories: Category[];
+  activeCategory: string;
+  onCategoryChange: (id: string) => void;
+  sortOrder: 'random' | 'latest' | 'popular' | 'oldest' | 'trending';
+  onSortChange: (order: 'random' | 'latest' | 'popular' | 'oldest' | 'trending') => void;
+  mediaType: 'all' | 'image' | 'video';
+  onMediaTypeChange: (type: 'all' | 'image' | 'video') => void;
+  aspectRatioFilter: 'all' | 'portrait' | 'landscape' | 'square' | 'ultrawide';
+  onAspectRatioChange: (ratio: 'all' | 'portrait' | 'landscape' | 'square' | 'ultrawide') => void;
+  currentTheme: string;
+  onThemeChange: (themeId: string) => void;
 }
 
-export default function Navbar({ onSearch, isAdmin, user, onLogout, onLogin, onInstall }: NavbarProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+export default React.memo(function Navbar({ 
+  searchQuery, 
+  onSearch, 
+  isAdmin, 
+  user, 
+  onLogout, 
+  onLogin, 
+  onInstall, 
+  recommendations = [],
+  categories,
+  activeCategory,
+  onCategoryChange,
+  sortOrder,
+  onSortChange,
+  mediaType,
+  onMediaTypeChange,
+  aspectRatioFilter,
+  onAspectRatioChange,
+  currentTheme,
+  onThemeChange
+}: NavbarProps) {
+  const [branding, setBranding] = useState({
+    logoLink: '/',
+    logoTitle: 'Aether',
+    logoIconUrl: ''
+  });
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, COLLECTIONS.APP_SETTINGS, 'global_config'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setBranding({
+          logoLink: data.logoLink || '/',
+          logoTitle: data.logoTitle || 'Aether',
+          logoIconUrl: data.logoIconUrl || ''
+        });
+      }
+    }, (err) => {
+      console.warn("Branding failed to resolve in Navbar, defaults used.", err);
+    });
+    return () => unsub();
+  }, []);
+
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [themeSelectorOpen, setThemeSelectorOpen] = useState(false);
+  const [languageOpen, setLanguageOpen] = useState(false);
+  const [showRecommendations, setShowRecommendations] = useState(true);
+  const { t } = useTranslation();
   const navigate = useNavigate();
 
+  // Logo Tap and Long Press logic
+  const longPressTimeout = useRef<any>(null);
+  const isLongPressActive = useRef<boolean>(false);
+  const pressStarted = useRef<boolean>(false);
+
+  const startPress = (e: React.MouseEvent | React.TouchEvent) => {
+    pressStarted.current = true;
+    isLongPressActive.current = false;
+    longPressTimeout.current = setTimeout(() => {
+      isLongPressActive.current = true;
+      const targetUrl = branding.logoIconUrl || (branding.logoLink.startsWith('http') ? branding.logoLink : 'https://i.postimg.cc/8P2zP9z8/aether-logo.png');
+      window.location.href = targetUrl;
+    }, 800);
+  };
+
+  const endPress = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!pressStarted.current) return;
+    pressStarted.current = false;
+    if (longPressTimeout.current) {
+      clearTimeout(longPressTimeout.current);
+    }
+    if (!isLongPressActive.current) {
+      navigate('/');
+    } else {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const cancelPress = () => {
+    pressStarted.current = false;
+    if (longPressTimeout.current) {
+      clearTimeout(longPressTimeout.current);
+    }
+  };
+
+  const userMenuRef = React.useRef<HTMLDivElement>(null);
+  const filterMenuRef = React.useRef<HTMLDivElement>(null);
+
+  useClickOutside(userMenuRef, () => setUserMenuOpen(false));
+  useClickOutside(filterMenuRef, () => setFiltersOpen(false));
+
+  useBodyScrollLock(filtersOpen || mobileSearchOpen);
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const query = e.target.value;
-    setSearchQuery(query);
-    onSearch(query);
+    const val = e.target.value;
+    onSearch(val);
+    setShowRecommendations(true);
+    if (val && location.pathname !== '/') {
+      navigate('/');
+    }
   };
 
   return (
     <>
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-xl border-b border-border-dark min-h-[72px] h-auto flex flex-col md:flex-row items-center justify-between px-4 md:px-10 py-3 md:py-0">
-        <div className="flex items-center justify-between w-full md:w-auto gap-4 md:gap-8">
-          <Link to="/" className="flex items-center gap-2 md:gap-3 group shrink-0">
-            <Logo size="md" />
-            <span className="font-display font-black text-[18px] md:text-[22px] tracking-tight uppercase text-white">Aether</span>
-          </Link>
-
-          {/* Mobile Menu Toggle - visible only on md and down */}
-          <div className="flex items-center gap-2 md:hidden">
-            {user && (
-              <Link to="/profile" className="p-2 text-text-dim hover:text-white">
-                <Bookmark className="w-5 h-5" />
-              </Link>
-            )}
-            <button 
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 text-text-main rounded-full bg-white/5"
-            >
-              {mobileMenuOpen ? <X /> : <Menu />}
-            </button>
+      <nav className="fixed top-0 left-0 right-0 z-[60] bg-bg-dark/60 backdrop-blur-3xl border-b border-white/[0.05] h-[72px] md:h-[80px] flex items-center px-4 gap-3 md:gap-4 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
+        {/* AETHER LOGO - Extreme Left */}
+        <div className="flex items-center shrink-0">
+          <div 
+            onMouseDown={startPress}
+            onMouseUp={endPress}
+            onMouseLeave={cancelPress}
+            onTouchStart={startPress}
+            onTouchEnd={endPress}
+            onTouchMove={cancelPress}
+            onContextMenu={(e) => e.preventDefault()}
+            className="flex items-center gap-3 group relative cursor-pointer select-none"
+          >
+            <div className="absolute inset-x-0 -inset-y-4 bg-brand-primary/10 blur-3xl rounded-full opacity-50" />
+            <div className="relative z-10 transition-transform group-hover:scale-105">
+              <Logo size="xs" />
+            </div>
+            <span className="font-display font-medium text-[15px] tracking-[0.2em] uppercase text-text-main hidden lg:block opacity-90 group-hover:opacity-100 transition-all">
+              {branding.logoTitle}
+            </span>
           </div>
         </div>
-
-        {/* Search Bar - Hidden on small mobile in main row if cramped */}
-        <div className="hidden md:flex relative flex-1 max-w-[480px] md:mx-10 group mt-3 md:mt-0 w-full">
-          <Search className="absolute left-[14px] top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim group-focus-within:text-brand-primary transition-colors" />
-          <input
-            type="text"
-            placeholder="Search moments..."
-            value={searchQuery}
-            onChange={handleSearchChange}
-            className="w-full h-11 pl-11 pr-4 bg-card-dark border border-border-dark rounded-2xl text-text-main text-sm focus:outline-none focus:ring-1 focus:ring-brand-primary transition-all"
-          />
-        </div>
-
-        <div className="hidden md:flex items-center gap-2 md:gap-4">
-          {/* Desktop Nav Items */}
-          <div className="flex items-center gap-2">
-            {isAdmin && (
-              <Link to="/moderation" className="p-2.5 text-text-dim hover:text-white hover:bg-white/5 rounded-full transition-all" title="Moderation">
-                <Shield className="w-5 h-5" />
-              </Link>
-            )}
-            {user && (
-              <Link to="/profile" className="p-2.5 text-text-dim hover:text-white hover:bg-white/5 rounded-full transition-all" title="My Collections">
-                <Bookmark className="w-5 h-5" />
-              </Link>
+        
+        {/* SEARCH BAR - Dynamic Width */}
+        <div className="flex-1 min-w-0 max-w-4xl relative group">
+          <div className="relative flex items-center">
+            <Search className="absolute left-4 md:left-5 w-4 h-4 text-text-dim/30 group-focus-within:text-brand-primary transition-all duration-500" />
+            <input
+              type="text"
+              placeholder={t('nav.search')}
+              value={searchQuery}
+              onChange={handleSearchChange}
+              className="w-full h-[46px] md:h-[52px] pl-12 md:pl-14 pr-10 bg-white/[0.04] border border-white/[0.05] rounded-full text-text-main text-[13px] md:text-[14px] font-medium focus:outline-none focus:bg-white/[0.07] focus:border-brand-primary/40 focus:ring-4 focus:ring-brand-primary/5 transition-all placeholder:text-text-dim/20 hover:bg-white/[0.06] shadow-inner"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => { onSearch(''); setShowRecommendations(false); }}
+                className="absolute right-4 p-1 rounded-full text-text-dim/40 hover:text-text-main hover:bg-white/10 transition-all cursor-pointer"
+                title="Clear Search"
+              >
+                <X className="w-4 h-4" />
+              </button>
             )}
           </div>
+          
+          <AnimatePresence>
+            {recommendations.length > 0 && searchQuery && showRecommendations && (
+              <motion.div
+                key="search-recommendations-wrapper"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="absolute top-full left-0 right-0 z-50 mt-3 p-1.5 bg-card-dark/95 backdrop-blur-3xl border border-white/10 rounded-[24px] shadow-[0_40px_80px_rgba(0,0,0,0.9)] overflow-hidden"
+              >
+                <div className="px-4 py-2 border-b border-white/5 flex items-center gap-2">
+                  <Sparkles className="w-3 h-3 text-brand-primary" />
+                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-text-dim/40">{t('nav.search')}</span>
+                </div>
+                {Array.from(new Set(recommendations)).filter(Boolean).map((rec, i) => (
+                  <button
+                    key={`nav-rec-${rec.slice(0, 20)}-${i}`}
+                    onClick={() => { onSearch(rec); setShowRecommendations(false); }}
+                    className="w-full px-4 py-3 text-left text-xs font-bold text-text-dim hover:text-white hover:bg-brand-primary/10 transition-all flex items-center justify-between group/rec"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Activity className="w-3.5 h-3.5 text-brand-primary/40 group-hover/rec:text-brand-primary transition-all" />
+                      <span className="tracking-tight uppercase tracking-widest text-[9px]">{rec}</span>
+                    </div>
+                    <ChevronDown className="w-3.5 h-3.5 -rotate-90 opacity-0 group-hover/rec:opacity-40 transition-opacity" />
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
+        {/* CONTROLS - Right Aligned */}
+        <div className="flex items-center gap-2 md:gap-3 ml-auto shrink-0">
+          {/* FILTER BUTTON */}
+          <button 
+            onClick={() => setFiltersOpen(!filtersOpen)}
+            className={cn(
+              "w-10 h-10 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all duration-500 relative group",
+              filtersOpen 
+                ? "bg-brand-primary text-bg-dark shadow-[0_0_30px_rgba(var(--brand-primary-rgb),0.4)] scale-110" 
+                : "bg-white/[0.04] border border-white/[0.05] text-text-dim/40 hover:text-brand-primary hover:bg-brand-primary/5 hover:border-brand-primary/30"
+            )}
+            title={t('common.explore')}
+          >
+            <Filter className="w-4.5 h-4.5 md:w-5 md:h-5" />
+          </button>
+
+          {/* PROFILE ICON */}
           {user ? (
-            <div className="relative">
+            <div ref={userMenuRef} className="relative">
               <button 
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="flex items-center gap-2 p-1.5 pl-3 rounded-full border border-border-dark hover:border-brand-primary/50 transition-colors bg-card-dark group"
+                className="flex items-center gap-2 p-0.5 rounded-full border border-white/[0.1] hover:border-brand-primary/30 transition-all bg-white/[0.02] shadow-2xl hover:scale-110 active:scale-95 group relative"
               >
-                <span className="text-xs font-bold hidden lg:block group-hover:text-brand-primary transition-colors">{user.displayName || 'Account'}</span>
                 {user.photoURL ? (
-                  <img src={user.photoURL} alt="Profile" referrerPolicy="no-referrer" className="w-8 h-8 rounded-full border border-white/10" />
+                  <img src={user.photoURL} alt="Profile" referrerPolicy="no-referrer" className="w-[36px] h-[36px] md:w-[42px] md:h-[42px] rounded-full object-cover" />
                 ) : (
-                  <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center">
-                    <User className="w-4 h-4" />
+                  <div className="w-[36px] h-[36px] md:w-[42px] md:h-[42px] rounded-full bg-white/5 flex items-center justify-center">
+                    <User className="w-5 h-5 text-text-dim" />
                   </div>
                 )}
+                <div className="absolute -inset-1 rounded-full bg-brand-primary/20 opacity-0 group-hover:opacity-100 blur-lg transition-opacity duration-500" />
               </button>
 
-              {userMenuOpen && (
-                <div className="absolute top-14 right-0 w-56 bg-card-dark border border-border-dark rounded-2xl shadow-2xl py-2 overflow-hidden animate-in fade-in slide-in-from-top-2 border-t-brand-primary border-t-2">
-                  <div className="px-4 py-3 border-b border-white/5 mb-1 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-bold text-white truncate">{user.displayName || 'User'}</p>
-                      <p className="text-[10px] text-text-dim truncate">{user.email}</p>
+              <AnimatePresence>
+                {userMenuOpen && (
+                  <motion.div 
+                    key="user-menu-content"
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute top-full right-0 mt-3 w-56 bg-card-dark/95 border border-white/20 rounded-[24px] shadow-[0_30px_60px_rgba(0,0,0,0.8)] py-1.5 overflow-hidden z-[101] backdrop-blur-[30px] ring-1 ring-white/5"
+                  >
+                    <div className="px-4 py-3 border-b border-white/5 mb-1 bg-white/[0.01]">
+                      <p className="text-[11px] font-black uppercase tracking-tight text-text-main truncate">{user.displayName || 'Account'}</p>
+                      <p className="text-[9px] text-text-dim/60 truncate mt-0.5 tracking-tight font-medium uppercase font-mono">{user.email}</p>
                     </div>
-                    {user.isAdmin ? (
-                      <div className="p-1 px-2 bg-amber-500/10 text-amber-500 rounded-lg border border-amber-500/20" title="Sanctuary Architect">
-                        <Shield className="w-3.5 h-3.5" />
-                      </div>
-                    ) : user.isPremium ? (
-                      <div className="p-1 px-2 bg-brand-primary/10 text-brand-primary rounded-lg border border-brand-primary/20" title="Elite Curator">
-                        <Sparkles className="w-3.5 h-3.5" />
-                      </div>
-                    ) : null}
-                  </div>
-                  <Link to="/profile" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/5 flex items-center gap-3 text-sm transition-colors">
-                    <UserCircle className="w-4 h-4 text-text-dim" /> Profile
-                  </Link>
-                  {onInstall && (
-                    <button onClick={() => { onInstall(); setUserMenuOpen(false); }} className="w-full px-4 py-2.5 hover:bg-brand-primary/10 flex items-center gap-3 text-sm text-brand-primary transition-colors">
-                      <Download className="w-4 h-4" /> Install Sanctuary
-                    </button>
-                  )}
-                  <Link to="/developer" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/5 flex items-center gap-3 text-sm transition-colors">
-                    <Bookmark className="w-4 h-4 text-text-dim" /> Developer Profile
-                  </Link>
-                  {isAdmin && (
-                    <>
-                      <div className="px-4 py-2 text-[10px] font-extrabold uppercase tracking-widest text-brand-primary/60 border-t border-white/5 mt-2">Administrative Console</div>
-                      <Link to="/admin" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/5 flex items-center gap-3 text-sm text-brand-primary transition-colors">
-                        <PlusCircle className="w-4 h-4" /> Asset Management
+                    
+                    <div className="py-1">
+                      <Link to="/profile" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-text-dim hover:text-text-main transition-all">
+                        <UserCircle className="w-3.5 h-3.5" /> {t('nav.my_registry')}
                       </Link>
-                      <Link to="/moderation" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/5 flex items-center gap-3 text-sm text-brand-primary transition-colors">
-                        <Shield className="w-4 h-4" /> Moderation Hall
+                      <button onClick={() => { setThemeSelectorOpen(true); setUserMenuOpen(false); }} className="w-full px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-brand-primary hover:text-brand-primary transition-all">
+                        <Palette className="w-3.5 h-3.5" /> {t('nav.theme')}
+                      </button>
+                      <button onClick={() => { setLanguageOpen(true); setUserMenuOpen(false); }} className="w-full px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-text-dim hover:text-text-main transition-all">
+                        <Globe className="w-3.5 h-3.5" /> {t('nav.language')}
+                      </button>
+                      {onInstall && (
+                        <button onClick={() => { onInstall(); setUserMenuOpen(false); }} className="w-full px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-brand-primary transition-all">
+                          <Download className="w-3.5 h-3.5" /> {t('nav.install')}
+                        </button>
+                      )}
+                      {!user.isPremium && (
+                        <Link to="/upgrade" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-brand-primary transition-all">
+                          <Sparkles className="w-3.5 h-3.5" /> {t('nav.upgrade')}
+                        </Link>
+                      )}
+                      <Link to="/upload" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-brand-primary transition-all">
+                        <PlusCircle className="w-3.5 h-3.5" /> {t('nav.post') || 'Share Vision'}
                       </Link>
-                    </>
-                  )}
-                  <div className="border-t border-white/5 mt-1 pt-1">
-                    <button onClick={onLogout} className="w-full px-4 py-2.5 hover:bg-red-500/10 flex items-center gap-3 text-sm text-red-400 transition-colors">
-                      <LogOut className="w-4 h-4" /> Logout
-                    </button>
-                  </div>
-                </div>
-              )}
+                      <Link to="/about" onClick={() => setUserMenuOpen(false)} className="px-4 py-2 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.1em] text-text-dim hover:text-text-main transition-all">
+                        <Info className="w-3.5 h-3.5" /> {t('nav.about')}
+                      </Link>
+                      <Link to="/developer" onClick={() => setUserMenuOpen(false)} className="px-4 py-2 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.1em] text-text-dim hover:text-text-main transition-all">
+                        <Activity className="w-3.5 h-3.5" /> {t('nav.architect')}
+                      </Link>
+                    </div>
+
+                    {isAdmin && (
+                      <div className="border-t border-white/[0.05] mt-1 pt-1">
+                        <div className="px-4 py-1.5 text-[7px] font-black uppercase tracking-[0.2em] text-text-dim/40">{t('nav.management')}</div>
+                        <Link to="/admin" onClick={() => setUserMenuOpen(false)} className="px-4 py-2 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.1em] text-brand-primary transition-all">
+                          <Palette className="w-3.5 h-3.5" /> {t('nav.assets') || 'Architect Terminal'}
+                        </Link>
+                        <Link to="/moderation" onClick={() => setUserMenuOpen(false)} className="px-4 py-2 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.1em] text-brand-primary transition-all">
+                          <Shield className="w-3.5 h-3.5" /> {t('nav.moderation')}
+                        </Link>
+                      </div>
+                    )}
+
+                    <div className="border-t border-white/[0.05] mt-1 pt-1">
+                      <button onClick={onLogout} className="w-full px-4 py-2.5 hover:bg-red-500/10 flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.1em] text-red-500/80 hover:text-red-500 transition-all">
+                        <LogOut className="w-3.5 h-3.5" /> {t('nav.disconnect')}
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ) : (
             <button 
               onClick={onLogin}
-              className="px-6 py-2.5 bg-brand-primary text-white font-bold rounded-full text-sm hover:scale-105 active:scale-95 transition-all shadow-lg shadow-brand-primary/20"
+              className="px-5 py-2.5 bg-text-main text-bg-dark font-medium uppercase tracking-[0.2em] rounded-full text-[10px] hover:scale-105 transition-all shadow-2xl active:scale-95 flex items-center gap-2 group border border-white/10"
             >
-              Sign In
+              <Sparkles className="w-3.5 h-3.5 group-hover:rotate-12 transition-transform" />
+              <span className="xs:inline">{t('nav.enter')}</span>
             </button>
           )}
         </div>
       </nav>
 
-      {/* Mobile Menu Overlay - Fully Immersive */}
-      {mobileMenuOpen && (
-        <div className="fixed inset-0 z-[60] bg-bg-dark flex flex-col pt-4 animate-in fade-in slide-in-from-right-full duration-300">
-          <div className="flex items-center justify-between px-6 pb-6 border-b border-white/5">
-            <div className="flex items-center gap-3">
-              <Logo size="md" />
-              <span className="font-display font-black text-xl uppercase tracking-tight">Menu</span>
-            </div>
-            <button 
-              onClick={() => setMobileMenuOpen(false)}
-              className="p-3 rounded-full bg-white/5 text-text-main"
+      {/* FILTER DRAWER / OVERLAY */}
+      <AnimatePresence>
+        {filtersOpen && (
+          <div className="fixed inset-0 z-[100]">
+            <motion.div
+              key="filter-overlay-bg"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-bg-dark/60 backdrop-blur-md"
+              onClick={() => setFiltersOpen(false)}
+            />
+            <motion.div
+              ref={filterMenuRef}
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -20, opacity: 0 }}
+              className="relative top-[80px] md:top-[88px] left-1/2 -translate-x-1/2 w-full max-w-4xl px-4 pointer-events-none"
             >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6 space-y-8">
-            {/* Search in Mobile Menu */}
-            <div className="space-y-3">
-              <h4 className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-text-dim px-2">Discovery</h4>
-              <div className="relative group">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-text-dim" />
-                <input
-                  type="text"
-                  placeholder="Seach sanctuary..."
-                  value={searchQuery}
-                  onChange={handleSearchChange}
-                  className="w-full h-14 pl-12 pr-4 bg-card-dark border border-border-dark rounded-2xl text-text-main text-lg focus:outline-none focus:ring-1 focus:ring-brand-primary transition-all"
+              <div className="bg-card-dark/95 backdrop-blur-3xl border border-white/5 rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,0.8)] p-6 pointer-events-auto">
+                <CategoryMenu 
+                  categories={categories}
+                  activeCategoryId={activeCategory}
+                  onCategorySelect={(id) => { onCategoryChange(id); setFiltersOpen(false); }}
+                  sortOrder={sortOrder}
+                  onSortSelect={(ord) => { onSortChange(ord); }}
+                  mediaType={mediaType}
+                  onMediaTypeSelect={(type) => { onMediaTypeChange(type); }}
+                  aspectRatioFilter={aspectRatioFilter}
+                  onAspectRatioSelect={(ratio) => { onAspectRatioChange(ratio); }}
+                  isLoggedIn={!!user}
                 />
               </div>
-            </div>
-
-            <nav className="space-y-2">
-              <h4 className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-text-dim px-2">Navigation</h4>
-              {onInstall && (
-                <button onClick={() => { onInstall(); setMobileMenuOpen(false); }} className="w-full flex items-center justify-between px-5 py-4 bg-brand-primary/10 rounded-2xl border border-brand-primary/20 text-lg font-bold text-brand-primary animate-pulse">
-                  Install App <span>✨</span>
-                </button>
-              )}
-              <Link to="/" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-5 py-4 bg-white/5 rounded-2xl border border-white/5 text-lg font-bold hover:bg-white/10 transition-all">
-                Home <span>→</span>
-              </Link>
-              {user && (
-                <Link to="/profile" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-5 py-4 bg-white/5 rounded-2xl border border-white/5 text-lg font-bold hover:bg-white/10 transition-all">
-                  My Sanctuary <span>→</span>
-                </Link>
-              )}
-              <Link to="/about" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-5 py-4 bg-white/5 rounded-2xl border border-white/5 text-lg font-bold hover:bg-white/10 transition-all">
-                About <span>→</span>
-              </Link>
-              <Link to="/developer" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-5 py-4 bg-white/5 rounded-2xl border border-white/5 text-lg font-bold hover:bg-white/10 transition-all">
-                The Architect <span>→</span>
-              </Link>
-            </nav>
-
-            {isAdmin && (
-              <div className="space-y-2">
-                <h4 className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-brand-primary px-2">Divine Control</h4>
-                <Link to="/admin" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-5 py-4 bg-brand-primary/10 rounded-2xl border border-brand-primary/20 text-lg font-bold text-brand-primary">
-                  Asset Dashboard <span>⚙️</span>
-                </Link>
-                <Link to="/moderation" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-5 py-4 bg-brand-primary/10 rounded-2xl border border-brand-primary/20 text-lg font-bold text-brand-primary">
-                  Moderation Hall <span>⚖️</span>
-                </Link>
-              </div>
-            )}
-
-            {!user && (
-              <button 
-                onClick={() => { onLogin(); setMobileMenuOpen(false); }}
-                className="w-full py-5 bg-white text-bg-dark font-black uppercase tracking-[0.2em] text-sm rounded-2xl shadow-xl active:scale-95 transition-all"
-              >
-                Sign In with Google
-              </button>
-            )}
+            </motion.div>
           </div>
+        )}
+      </AnimatePresence>
 
-          {user && (
-            <div className="p-6 border-t border-white/5 bg-card-dark">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <img src={user.photoURL || ''} alt="" className="w-10 h-10 rounded-full border border-white/10" />
-                    {user.isAdmin ? (
-                      <div className="absolute -bottom-1 -right-1 p-0.5 bg-amber-500 text-bg-dark rounded-full border border-bg-dark">
-                        <Shield className="w-2.5 h-2.5" />
-                      </div>
-                    ) : user.isPremium ? (
-                      <div className="absolute -bottom-1 -right-1 p-0.5 bg-brand-primary text-white rounded-full border border-bg-dark">
-                        <Sparkles className="w-2.5 h-2.5" />
-                      </div>
-                    ) : null}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-white leading-tight">{user.displayName}</p>
-                    <p className="text-[10px] text-text-dim uppercase tracking-wider font-bold">
-                      {user.isAdmin ? 'Sanctuary Architect' : user.isPremium ? 'Elite Curator' : 'Resident'}
-                    </p>
-                  </div>
-                </div>
-                <button onClick={() => { onLogout(); setMobileMenuOpen(false); }} className="p-3 rounded-xl bg-red-500/10 text-red-400">
-                  <LogOut className="w-5 h-5" />
+
+      <ThemeSelector 
+        isOpen={themeSelectorOpen}
+        onClose={() => setThemeSelectorOpen(false)}
+        currentTheme={currentTheme}
+        onThemeSelect={onThemeChange}
+        isAdmin={isAdmin}
+      />
+
+      <LanguageSelector 
+        isOpen={languageOpen}
+        onClose={() => setLanguageOpen(false)}
+      />
+
+      {/* Mobile Search Overlay remains similar but streamlined */}
+
+      {/* Mobile Search Overlay - Immersive & Minimalist */}
+      {mobileSearchOpen && (
+        <div 
+          className="fixed inset-0 z-[100] bg-bg-dark backdrop-blur-3xl animate-in fade-in duration-300"
+          onClick={() => setMobileSearchOpen(false)}
+        >
+          <div 
+            className="flex flex-col h-full max-w-2xl mx-auto px-8 pt-12"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-end mb-16">
+              <button 
+                onClick={() => setMobileSearchOpen(false)}
+                className="p-2 text-text-dim hover:text-text-main transition-colors"
+              >
+                <X className="w-8 h-8" />
+              </button>
+            </div>
+            
+            <div className="relative group">
+              <Search className="absolute left-0 top-1/2 -translate-y-1/2 w-6 h-6 text-text-dim/20 group-focus-within:text-text-main transition-colors" />
+              <input
+                autoFocus
+                type="text"
+                placeholder="Find Your Vision..."
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e)}
+                className="w-full h-20 pl-9 pr-12 bg-transparent border-b border-border-dark text-3xl font-light text-text-main placeholder:text-text-dim/10 focus:outline-none focus:border-text-main transition-all uppercase tracking-tight"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => { onSearch(''); }}
+                  className="absolute right-0 top-1/2 -translate-y-1/2 p-2 text-text-dim hover:text-text-main"
+                  title="Clear Search"
+                >
+                  <X className="w-6 h-6" />
                 </button>
+              )}
+            </div>
+            
+            <div className="mt-12">
+              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-text-dim/20 mb-4">Discover Curations</p>
+              <div className="flex flex-wrap gap-3">
+                {Array.from(new Set(recommendations)).filter(Boolean).map((rec, i) => (
+                   <button 
+                     key={`mobile-rec-${rec.slice(0, 20)}-${i}`} 
+                     onClick={() => { onSearch(rec); setMobileSearchOpen(false); }}
+                     className="px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-xs font-bold text-text-main hover:bg-brand-primary/20 hover:border-brand-primary/50 transition-all uppercase tracking-widest"
+                   >
+                     {rec}
+                   </button>
+                ))}
+                {recommendations.length === 0 && <div className="w-8 h-px bg-white/20"></div>}
               </div>
             </div>
-          )}
+          </div>
         </div>
       )}
     </>
   );
-}
+});

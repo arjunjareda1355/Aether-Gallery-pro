@@ -11,6 +11,8 @@
         "category": { "type": "string", "description": "The category name this image belongs to" },
         "tags": { "type": "array", "items": { "type": "string" }, "description": "Keywords for search" },
         "likes": { "type": "integer", "description": "Total number of likes" },
+        "views": { "type": "integer", "description": "Total number of views" },
+        "saves": { "type": "integer", "description": "Total number of saves" },
         "timestamp": { "type": "string", "format": "date-time", "description": "When it was uploaded" },
         "userId": { "type": "string", "description": "ID of the admin who uploaded it" },
         "isPremium": { "type": "boolean", "description": "Whether this asset is premium" },
@@ -26,8 +28,35 @@
         "isPremium": { "type": "boolean" },
         "isPremiumPending": { "type": "boolean" },
         "subscriptionPlan": { "type": "string", "enum": ["none", "99", "199", "499"] },
-        "lastScreenshotUrl": { "type": "string" },
-        "lastPaymentAt": { "type": "string", "format": "date-time" }
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "bio": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" }
+      }
+    },
+    "UpgradeRequest": {
+      "title": "Upgrade Request",
+      "description": "Custom upgrade request",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "fullName": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "purpose": { "type": "string" },
+        "details": { "type": "string" },
+        "status": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Like": {
+      "title": "Like",
+      "description": "User like on an image",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "imageId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
       }
     },
     "PaymentRequest": {
@@ -92,15 +121,41 @@
         "status": { "type": "string", "enum": ["pending", "actioned", "ignored"] }
       },
       "required": ["imageId", "userId", "type", "timestamp", "status"]
+    },
+    "UserInterests": {
+      "title": "User Interests",
+      "description": "Normalized tag weights for user recommendations",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "interests": { "type": "object", "additionalProperties": { "type": "number" } },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "interests", "lastUpdated"]
+    },
+    "Follow": {
+      "title": "Follow",
+      "description": "User follow relationships",
+      "type": "object",
+      "properties": {
+        "followerId": { "type": "string" },
+        "followingId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["followerId", "followingId", "timestamp"]
     }
   },
   "firestore": {
     "/images/{imageId}": { "schema": "Image", "description": "Collection of image metadata" },
     "/categories/{categoryId}": { "schema": "Category", "description": "Collection of gallery categories" },
     "/comments/{commentId}": { "schema": "Comment", "description": "User comments" },
-    "/collections/{collectionId}": { "schema": "Collection", "description": "User collections" },
+    "/user_collections/{collectionId}": { "schema": "Collection", "description": "User collections" },
     "/reports/{reportId}": { "schema": "Report", "description": "Moderation reports" },
     "/users/{userId}": { "schema": "User", "description": "User subscription data" },
-    "/payments/{paymentId}": { "schema": "PaymentRequest", "description": "Premium upgrade requests" }
+    "/payments/{paymentId}": { "schema": "PaymentRequest", "description": "Premium upgrade requests" },
+    "/user_interests/{userId}": { "schema": "UserInterests", "description": "User recommendation weights" },
+    "/upgrade_requests/{requestId}": { "schema": "UpgradeRequest", "description": "Custom upgrade requests" },
+    "/likes/{likeId}": { "schema": "Like", "description": "Image likes by users" },
+    "/follows/{followId}": { "schema": "Follow", "description": "Follow relationships between users" }
   }
 }

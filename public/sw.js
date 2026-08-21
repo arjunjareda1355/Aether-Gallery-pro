@@ -1,61 +1,100 @@
-const CACHE_NAME = 'aether-v2';
-const PRE_CACHE_ASSETS = [
+const CACHE_NAME = 'aether-static-v1';
+const RUNTIME_CACHE_NAME = 'aether-runtime-v1';
+
+// Only pre-cache minimal critical shells to guarantee service worker successfully installs
+const PRECACHE_ASSETS = [
   '/',
   '/index.html',
-  '/manifest.json',
-  '/vite.svg'
+  '/icon.svg',
+  '/manifest.json'
 ];
 
+// Installation: cache minimal shell
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRE_CACHE_ASSETS);
-    }).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_ASSETS))
+      .then(() => self.skipWaiting())
   );
 });
 
+// Activation: clean up legacy caches
 self.addEventListener('activate', (event) => {
+  const activeCaches = [CACHE_NAME, RUNTIME_CACHE_NAME];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) return caches.delete(cache);
+        cacheNames.map((name) => {
+          if (!activeCaches.includes(name)) {
+            console.log('[SW] Cleaning old cache:', name);
+            return caches.delete(name);
+          }
         })
       );
     }).then(() => self.clients.claim())
   );
 });
 
+// Fetch Interception
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
-  
-  // Strategy: Cache-First for Media, Stale-While-Revalidate for others
-  const isMedia = event.request.url.match(/\.(jpg|jpeg|png|gif|svg|webp|mp4|webm|ogg)$/i) || 
-                  event.request.url.includes('firebasestorage.googleapis.com') ||
-                  event.request.url.includes('picsum.photos') ||
-                  event.request.url.includes('images.unsplash.com');
-  
-  const isLocalAsset = event.request.url.startsWith(self.location.origin);
+  // Skip non-GET requests or requests to non-http/https schemes (e.g. chrome-extension, firebase/firestore websocket)
+  if (event.request.method !== 'GET' || !event.request.url.startsWith('http')) {
+    return;
+  }
 
-  if (!isLocalAsset && !isMedia) return;
+  const url = new URL(event.request.url);
 
+  // For Firestore, external firebase auth, or hot-reload / vite dev streams, don't force cache
+  if (
+    url.hostname.includes('firestore.googleapis.com') ||
+    url.hostname.includes('identitytoolkit.googleapis.com') ||
+    url.pathname.includes('/@vite/') ||
+    url.pathname.includes('/node_modules/')
+  ) {
+    return;
+  }
+
+  // Strategy: Stale-While-Revalidate for JS, CSS, images, and other sub-resources
   event.respondWith(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.match(event.request).then((cachedResponse) => {
-        // If it's media and we have it in cache, return immediately (Cache-First)
-        if (isMedia && cachedResponse) {
-          return cachedResponse;
-        }
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) {
+        // Fetch fresh copy in the background to keep the cache updated
+        fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse.status === 200) {
+              caches.open(RUNTIME_CACHE_NAME).then((cache) => {
+                cache.put(event.request, networkResponse);
+              });
+            }
+          })
+          .catch(() => {/* Ignore background sync failures */});
+        
+        return cachedResponse;
+      }
 
-        const fetchPromise = fetch(event.request).then((networkResponse) => {
-          if (networkResponse.ok) {
-            cache.put(event.request, networkResponse.clone());
+      // If not in cache, fetch from network and cache dynamically
+      return fetch(event.request)
+        .then((networkResponse) => {
+          // Cache successful GET responses
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(RUNTIME_CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
           }
           return networkResponse;
-        }).catch(() => cachedResponse);
-        
-        return cachedResponse || fetchPromise;
-      });
+        })
+        .catch(() => {
+          // If offline and requesting document, fallback to '/'
+          if (event.request.mode === 'navigate') {
+            return caches.match('/');
+          }
+          return new Response('Offline - Asset not found', {
+            status: 503,
+            statusText: 'Service Unavailable',
+            headers: new Headers({ 'Content-Type': 'text/plain' })
+          });
+        });
     })
   );
 });

@@ -1,0 +1,67 @@
+src/components/gallery/CommentSection.tsx:      const docs = snapshot.docs.map(doc => ({
+src/components/gallery/CommentSection.tsx:        {comments.map((comment) => (
+src/components/gallery/CollectionModal.tsx:      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Collection));
+src/components/gallery/CollectionModal.tsx:          {collections.map(coll => {
+src/components/gallery/MasonryGrid.tsx:      {columns.map((col, cIdx) => (
+src/components/gallery/MasonryGrid.tsx:          {col.map((item, iIdx) => (
+src/components/gallery/ImageModal.tsx:          .map(d => ({ id: d.id, ...d.data() } as Image))
+src/components/gallery/ImageModal.tsx:                {bubbles.map(bubble => (
+src/components/gallery/ImageModal.tsx:                    {image.urls.map((url, i) => (
+src/components/gallery/ImageModal.tsx:                      {(['broken', 'inappropriate', 'spam'] as const).map((t) => (
+src/components/gallery/ImageModal.tsx:                    {Array.from(new Set(image.tags)).filter(tag => !!tag).map((tag: string, i: number) => (
+src/components/gallery/ImageModal.tsx:                    {relatedImages.map((img, i) => (
+src/components/gallery/CategoryMenu.tsx:          {allOptions.map((cat) => (
+src/components/gallery/CategoryMenu.tsx:            {sortOptions.map((opt) => (
+src/components/gallery/CategoryMenu.tsx:            {mediaOptions.map((opt) => (
+src/components/gallery/CategoryMenu.tsx:            {ratioOptions.map((opt) => (
+src/components/layout/Navbar.tsx:                      {Array.from(new Set(recommendations)).filter(Boolean).map((rec, i) => (
+src/components/layout/Navbar.tsx:                {Array.from(new Set(recommendations)).filter(Boolean).map((rec, i) => (
+src/components/layout/ThemeSelector.tsx:              {filteredThemes.map((theme) => {
+src/components/layout/SmartOnboarding.tsx:            {slides.map((s, idx) => (
+src/components/admin/UploadForm.tsx:    const urls = formData.url.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+src/components/admin/UploadForm.tsx:                  {(['image', 'video'] as const).map((type) => (
+src/components/admin/UploadForm.tsx:                  {categories.map(cat => (
+src/components/admin/UploadForm.tsx:                {Array.from(new Set(formData.tags)).map((tag: string, i: number) => (
+src/components/admin/CategoryManager.tsx:        ).map(category => (
+src/lib/recommendation.ts:        .map(e => e[0]);
+src/lib/firebase.ts:        providerInfo: auth.currentUser?.providerData.map(p => ({
+src/pages/ProfilePage.tsx:      const docs = s.docs.map(d => ({ id: d.id, ...d.data() } as Collection));
+src/pages/ProfilePage.tsx:      const imgs = s.docs.map(d => ({ id: d.id, ...d.data() } as Image));
+src/pages/ProfilePage.tsx:      setTargetLikedIds(s.docs.map(d => d.data().imageId));
+src/pages/ProfilePage.tsx:            {(['collections', 'likes', 'uploads'] as TabType[]).map((tab) => (
+src/pages/ProfilePage.tsx:                {collections.map(coll => {
+src/pages/DeveloperPage.tsx:                    {editData.bio.map((p, i) => (
+src/pages/DeveloperPage.tsx:                        {editData.socials.map((s, i) => (
+src/pages/DeveloperPage.tsx:                        {editData.streaming.map((s, i) => (
+src/pages/DeveloperPage.tsx:                    {Array.from(new Set(profile.tags)).filter(Boolean).map((tag, i) => (
+src/pages/DeveloperPage.tsx:                  {profile.bio.map((p, i) => (
+src/pages/DeveloperPage.tsx:                  {profile.socials.map((social, i) => {
+src/pages/DeveloperPage.tsx:                  {profile.streaming.map((stream, i) => {
+src/pages/AboutPage.tsx:          {sections.map((sec, idx) => (
+src/pages/AboutPage.tsx:            {helpTopics.map((topic, idx) => (
+src/pages/ModerationPage.tsx:        const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Report));
+src/pages/ModerationPage.tsx:        const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()} as PaymentRequest));
+src/pages/ModerationPage.tsx:        const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+src/pages/ModerationPage.tsx:        const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Image));
+src/pages/ModerationPage.tsx:    const urls = bulkUrls.split('\n').map(u => u.trim()).filter(Boolean);
+src/pages/ModerationPage.tsx:      let directUrls = images.map(img => {
+src/pages/ModerationPage.tsx:        directUrls = [...new Set([...matches].map(m => m[0]))];
+src/pages/ModerationPage.tsx:      setSelectedAssetIds(new Set(filteredAssets.map(a => a.id)));
+src/pages/ModerationPage.tsx:          {(['reports', 'payments', 'assets', 'upgrades', 'bulk'] as const).map((tab) => (
+src/pages/ModerationPage.tsx:              {filteredAssets.map(asset => (
+src/pages/ModerationPage.tsx:            {uniqueReports.map((report) => (
+src/pages/ModerationPage.tsx:            {uniquePayments.map((payment) => (
+src/pages/ModerationPage.tsx:            {uniqueUpgrades.map(req => (
+src/pages/UpgradePage.tsx:        {PLANS.map((plan, idx) => (
+src/pages/UpgradePage.tsx:              {plan.features.map((feature, i) => (
+src/App.tsx:          setLikedImageIds(new Set(likeDocs.docs.map(d => d.data().imageId)));
+src/App.tsx:          setFollowingIds(new Set(followDocs.docs.map(d => d.data().followingId)));
+src/App.tsx:      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+src/App.tsx:          .map(d => d.data().imageId);
+src/App.tsx:          const docs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Image));
+src/App.tsx:            const newIds = new Set(docs.map(d => d.id));
+src/App.tsx:      const newDocs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Image));
+src/App.tsx:        const existingIds = new Set(prev.map(img => img.id));
+src/App.tsx:    const allImages = snap.docs.map(d => ({ id: d.id, ...d.data() } as Image));
+src/App.tsx:      const tags = (img.tags || []).map(t => t.toLowerCase());
+src/App.tsx:          const tags = (img.tags || []).map(t => t.toLowerCase());

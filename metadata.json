@@ -1,6 +1,6 @@
 {
-  "name": "Remix: Aether Gallery",
+  "name": "Aether Gallery Pro",
   "description": "An atmospheric, cinematic media sanctuary. Curated moments captured in time, powered by high-performance architecture.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

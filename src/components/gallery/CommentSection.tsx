@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Send, User, Trash2 } from 'lucide-react';
+import { Send, User, Trash2, MessageSquare } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { db, COLLECTIONS } from '../../lib/firebase';
 import { 
   collection, 
@@ -14,13 +15,15 @@ import {
 } from 'firebase/firestore';
 import { Comment, User as UserType } from '../../types';
 import { formatDate } from '../../lib/utils';
+import { trackActivity } from '../../lib/recommendation';
 
 interface CommentSectionProps {
   imageId: string;
   user: UserType | null;
+  imageTags?: string[];
 }
 
-export default function CommentSection({ imageId, user }: CommentSectionProps) {
+export default function CommentSection({ imageId, user, imageTags = [] }: CommentSectionProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -37,7 +40,11 @@ export default function CommentSection({ imageId, user }: CommentSectionProps) {
         id: doc.id,
         ...doc.data()
       })) as Comment[];
-      setComments(docs);
+      // Deduplicate comments
+      const uniqueDocs = docs.filter((c, index, self) =>
+        c && c.id && index === self.findIndex((t) => t.id === c.id)
+      );
+      setComments(uniqueDocs);
     });
 
     return () => unsubscribe();
@@ -49,6 +56,9 @@ export default function CommentSection({ imageId, user }: CommentSectionProps) {
 
     setIsSubmitting(true);
     try {
+      if (user && imageTags.length > 0) {
+        trackActivity(user.uid, imageTags, 'comment');
+      }
       await addDoc(collection(db, COLLECTIONS.COMMENTS), {
         imageId,
         userId: user.uid,
@@ -75,38 +85,48 @@ export default function CommentSection({ imageId, user }: CommentSectionProps) {
   };
 
   return (
-    <div className="mt-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-bold">Comments ({comments.length})</h3>
+    <div className="flex flex-col h-full overflow-hidden bg-white/[0.01] backdrop-blur-3xl rounded-[40px] border border-white/5 shadow-2xl">
+      <div className="p-6 md:p-8 space-y-6 bg-white/[0.02] border-b border-white/5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-black uppercase tracking-[0.3em] text-text-main flex items-center gap-3">
+             Comments
+            <span className="px-2.5 py-1 bg-brand-primary/10 text-brand-primary text-[10px] font-black rounded-lg border border-brand-primary/20">
+              {comments.length}
+            </span>
+          </h3>
+        </div>
+
+        {user ? (
+          <form onSubmit={handleSubmit} className="relative group">
+            <input
+              type="text"
+              placeholder="Add a comment..."
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+              className="w-full bg-white/[0.02] border border-white/10 rounded-[20px] py-4 pl-5 pr-14 text-xs font-medium text-text-main focus:outline-none focus:border-brand-primary/40 focus:bg-white/[0.04] transition-all group-hover:border-white/20 shadow-inner"
+            />
+            <button
+              type="submit"
+              disabled={!newComment.trim() || isSubmitting}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-brand-primary text-bg-dark disabled:opacity-30 disabled:grayscale hover:scale-105 rounded-xl transition-all shadow-[0_10px_20px_rgba(var(--brand-primary-rgb),0.2)] active:scale-95"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        ) : (
+          <div className="bg-black/20 rounded-2xl p-4 text-center border border-dashed border-white/10">
+            <p className="text-sm text-text-dim">Sign in to join the conversation.</p>
+          </div>
+        )}
       </div>
 
-      {user ? (
-        <form onSubmit={handleSubmit} className="relative">
-          <input
-            type="text"
-            placeholder="Add a comment..."
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-4 pr-12 text-sm focus:outline-none focus:ring-1 focus:ring-brand-primary transition-all"
-          />
-          <button
-            type="submit"
-            disabled={!newComment.trim() || isSubmitting}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-brand-primary disabled:opacity-50 hover:bg-brand-primary/10 rounded-xl transition-all"
-          >
-            <Send className="w-5 h-5" />
-          </button>
-        </form>
-      ) : (
-        <div className="bg-white/5 rounded-2xl p-4 text-center">
-          <p className="text-sm text-text-dim">Sign in to join the conversation.</p>
-        </div>
-      )}
-
-      <div className="space-y-4">
-        {comments.map((comment) => (
-          <div key={comment.id} className="group flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-white/5 flex-shrink-0 flex items-center justify-center overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar space-y-6">
+        {comments.map((comment, i) => (
+          <div key={`comment-${comment.id || ''}-${i}`} className="group flex gap-4">
+            <Link 
+              to={`/profile/${comment.userId}`}
+              className="w-10 h-10 rounded-xl bg-white/5 flex-shrink-0 flex items-center justify-center overflow-hidden border border-white/5 hover:border-brand-primary/50 transition-all"
+            >
               {comment.userPhoto ? (
                 <img 
                   src={comment.userPhoto} 
@@ -115,30 +135,34 @@ export default function CommentSection({ imageId, user }: CommentSectionProps) {
                   className="w-full h-full object-cover" 
                 />
               ) : (
-                <User className="w-4 h-4 text-text-dim" />
+                <User className="w-5 h-5 text-text-dim" />
               )}
-            </div>
-            <div className="flex-1 space-y-1">
+            </Link>
+            <div className="flex-1 space-y-1.5">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-text-main">{comment.userName}</span>
-                  <span className="text-[10px] text-text-dim font-medium uppercase">{formatDate(comment.timestamp)}</span>
+                <div className="flex flex-col">
+                  <Link to={`/profile/${comment.userId}`} className="text-xs font-black uppercase tracking-widest text-white/90 hover:text-brand-primary transition-colors">{comment.userName}</Link>
+                  <span className="text-[9px] text-text-dim font-bold uppercase tracking-tight">{formatDate(comment.timestamp)}</span>
                 </div>
                 {user?.isAdmin && (
                   <button 
                     onClick={() => handleDelete(comment.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:bg-red-400/10 rounded transition-all"
+                    className="opacity-0 group-hover:opacity-100 p-1.5 text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
+                    title="Remove comment"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
-              <p className="text-sm text-white/80 leading-relaxed">{comment.text}</p>
+              <p className="text-sm text-white/70 leading-relaxed font-medium">{comment.text}</p>
             </div>
           </div>
         ))}
         {comments.length === 0 && (
-          <p className="text-center text-sm text-text-dim py-4">No comments yet. Be the first!</p>
+          <div className="py-10 text-center space-y-2">
+            <MessageSquare className="w-8 h-8 text-white/10 mx-auto" />
+            <p className="text-sm text-text-dim italic">No comments yet. Start the conversation.</p>
+          </div>
         )}
       </div>
     </div>

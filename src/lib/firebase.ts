@@ -28,15 +28,21 @@ const app = initializeApp(firebaseConfig);
 // Initialize Firestore with specific database ID and optional settings
 export const db = initializeFirestore(app, {}, firebaseConfig.firestoreDatabaseId || '(default)');
 
-// Simple connection test
+// Immersive connection test
 export async function testFirestoreConnection() {
   try {
     const testDoc = doc(db, '_connection_test_', 'ping');
+    // Ensure we can at least reach it
     await getDocFromServer(testDoc);
-    console.log("Firestore connection verified");
+    console.log("Aether Sanctum: Connection resonance established.");
     return true;
-  } catch (error) {
-    console.error("Firestore connection health check failed:", error);
+  } catch (error: any) {
+    // If permission denied on health check, it's a rule issue
+    if (error.code === 'permission-denied') {
+      console.warn("Aether Sanctum: Connection established but rules blocks access to _connection_test_.");
+      return true; // Connection is still alive, rules are the gate
+    }
+    console.error("Aether Sanctum: Connection health check failed:", error);
     return false;
   }
 }
@@ -55,7 +61,9 @@ export const COLLECTIONS = {
   APP_SETTINGS: 'app_settings',
   USERS: 'users',
   PAYMENTS: 'payments',
-  UPGRADE_REQUESTS: 'upgrade_requests'
+  UPGRADE_REQUESTS: 'upgrade_requests',
+  USER_INTERESTS: 'user_interests',
+  FOLLOWS: 'follows'
 };
 
 export interface FirestoreErrorInfo {
@@ -72,24 +80,26 @@ export interface FirestoreErrorInfo {
 }
 
 export const handleFirestoreError = (error: any, operationType: FirestoreErrorInfo['operationType'], path: string | null = null) => {
-  if (error.code === 'permission-denied' || error.message?.includes('insufficient permissions')) {
+  if (error.code === 'permission-denied' || error.message?.includes('insufficient permissions') || error.message?.includes('Missing or insufficient permissions')) {
     const errorInfo: FirestoreErrorInfo = {
-      error: error.message,
+      error: error.message || 'Permission Denied',
       operationType,
       path,
       authInfo: {
         userId: auth.currentUser?.uid || 'anonymous',
         email: auth.currentUser?.email || '',
         emailVerified: auth.currentUser?.emailVerified || false,
-        isAnonymous: auth.currentUser?.isAnonymous || true,
+        isAnonymous: auth.currentUser?.isAnonymous ?? true,
         providerInfo: auth.currentUser?.providerData.map(p => ({
           providerId: p.providerId,
           displayName: p.displayName || '',
           email: p.email || ''
-        })) || []
+        })) ?? []
       }
     };
+    console.error("CRITICAL: Permission Error Detected:", JSON.stringify(errorInfo, null, 2));
     throw new Error(JSON.stringify(errorInfo));
   }
+  console.error("Firestore operation error:", error);
   throw error;
 };

@@ -1,71 +1,445 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { cn, formatDate } from '../../lib/utils';
+import { useTranslation } from 'react-i18next';
+import { cn, formatDate, copyToClipboard, useBodyScrollLock } from '../../lib/utils';
 import { Link } from 'react-router-dom';
-import { ZoomIn, ZoomOut, Maximize2, X, Heart, Share2, Download, Copy, ExternalLink, Calendar, Tag, Flag, BookmarkPlus, MessageSquare, Clock, Trash2, AlertCircle, Sparkles, Minimize2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, X, Heart, Share2, Download, Copy, ExternalLink, Calendar, Tag, Flag, BookmarkPlus, MessageSquare, Clock, Trash2, AlertCircle, Sparkles, Minimize2, ChevronLeft, ChevronRight, UserCircle, Mail, ShieldCheck, PlusCircle, MapPin, Briefcase, User as UserIcon, Code, Play, Youtube, Bell, Check, Volume2, VolumeX, Music, Headphones, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { Image, User } from '../../types';
 import CommentSection from './CommentSection';
 import CollectionModal from './CollectionModal';
 import { db, COLLECTIONS } from '../../lib/firebase';
-import { addDoc, collection, serverTimestamp, deleteDoc, doc } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, deleteDoc, doc, query, where, getDocs, limit, onSnapshot, orderBy } from 'firebase/firestore';
+import { trackActivity } from '../../lib/recommendation';
 
 interface ImageModalProps {
   image: Image | null;
   onClose: () => void;
   onLike: (e: React.MouseEvent, image: Image) => void;
+  onSave: (img: Image) => void;
   hasLiked: boolean;
+  isSaved: boolean;
   user: User | null;
   onNavigate?: (direction: 'next' | 'prev') => void;
   hasNext?: boolean;
   hasPrev?: boolean;
+  onSelectImage?: (image: Image) => void;
 }
 
-export default function ImageModal({ image, onClose, onLike, hasLiked, user, onNavigate, hasNext, hasPrev }: ImageModalProps) {
+const HeartBubble = ({ id, x, y, onComplete }: { id: string, x: number, y: number, onComplete: () => void, key?: React.Key }) => {
+  const isPop = id.includes('tap') || id.includes('center');
+  
+  return (
+    <motion.div
+      initial={{ opacity: 1, scale: 0.2, rotate: (Math.random() - 0.5) * 60 }}
+      animate={isPop ? {
+        scale: [0.2, 1.4, 0.9, 1.2, 3],
+        opacity: [0, 1, 1, 1, 0],
+        rotate: [0, -15, 15, -5, 0],
+        y: [0, -20, -10, -5, 0]
+      } : { 
+        opacity: [1, 0.8, 0], 
+        scale: [0.5, 1.2, 1.5], 
+        x: (Math.random() - 0.5) * 150, 
+        y: -250 - Math.random() * 100 
+      }}
+      transition={{ 
+        duration: isPop ? 0.9 : 1.2, 
+        ease: isPop ? "easeOut" : "circOut"
+      }}
+      onAnimationComplete={onComplete}
+      className={cn(
+        "absolute pointer-events-none z-[160] text-red-500 drop-shadow-[0_0_30px_rgba(239,68,68,0.7)]",
+        isPop ? "w-40 h-40" : "w-10 h-10"
+      )}
+      style={{ 
+        left: x, 
+        top: y, 
+        transform: 'translate(-50%, -50%)'
+      }}
+    >
+      <Heart className={cn("w-full h-full fill-current stroke-white stroke-2", isPop && "drop-shadow-[0_0_40px_rgba(255,255,255,0.6)]")} />
+    </motion.div>
+  );
+};
+
+export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, isSaved, user, onNavigate, hasNext, hasPrev, onSelectImage }: ImageModalProps) {
+  const { t } = useTranslation();
+  useBodyScrollLock(!!image);
+  const slideVariants = {
+    enter: (direction: number) => ({
+      x: direction > 0 ? 500 : -500,
+      opacity: 0,
+      scale: 0.98
+    }),
+    center: {
+      zIndex: 1,
+      x: 0,
+      opacity: 1,
+      scale: 1
+    },
+    exit: (direction: number) => ({
+      zIndex: 0,
+      x: direction < 0 ? 500 : -500,
+      opacity: 0,
+      scale: 0.98
+    })
+  };
+
   const [isCollectionsOpen, setIsCollectionsOpen] = useState(false);
   const [reportTypeOpen, setReportTypeOpen] = useState(false);
+  const [showUploaderDetails, setShowUploaderDetails] = useState(false);
+  const [isDetailsExpanded, setIsDetailsExpanded] = useState(false);
+  const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
+  const [uploaderFullData, setUploaderFullData] = useState<any>(null);
   const [isReporting, setIsReporting] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const lastWheelNavRef = useRef<number>(0);
+  const touchStartYRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = isMuted;
+    }
+  }, [isMuted, image?.id]);
+  const [isCommentsMinimized, setIsCommentsMinimized] = useState(true);
   const [isMobileUiHidden, setIsMobileUiHidden] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [showZoomBadge, setShowZoomBadge] = useState(false);
+  const zoomBadgeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const panX = useMotionValue(0);
+  const panY = useMotionValue(0);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [bubbles, setBubbles] = useState<{ id: string, x: number, y: number }[]>([]);
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [direction, setDirection] = useState(0);
+
   const mediaRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const lastTouchRef = useRef<number>(0);
 
   const dragX = useMotionValue(0);
   const swipeOpacity = useTransform(dragX, [-100, 0, 100], [0.5, 1, 0.5]);
 
+  const triggerZoomBadge = () => {
+    setShowZoomBadge(true);
+    if (zoomBadgeTimerRef.current) clearTimeout(zoomBadgeTimerRef.current);
+    zoomBadgeTimerRef.current = setTimeout(() => setShowZoomBadge(false), 1200);
+  };
+
+  const resetZoom = () => {
+    setZoomLevel(1);
+    panX.set(0);
+    panY.set(0);
+    dragX.set(0);
+    setOffset({ x: 0, y: 0 });
+    triggerZoomBadge();
+  };
+
+  const handleZoomIn = (step = 0.5) => {
+    setZoomLevel(prev => Math.min(4, Math.round((prev + step) * 100) / 100));
+    triggerZoomBadge();
+  };
+
+  const handleZoomOut = (step = 0.5) => {
+    setZoomLevel(prev => {
+      const next = Math.max(1, Math.round((prev - step) * 100) / 100);
+      if (next === 1) {
+        panX.set(0);
+        panY.set(0);
+        dragX.set(0);
+      }
+      return next;
+    });
+    triggerZoomBadge();
+  };
+
+  const handleToggleZoomAtPoint = () => {
+    if (zoomLevel > 1) {
+      resetZoom();
+    } else {
+      setZoomLevel(2.5);
+      triggerZoomBadge();
+    }
+  };
+
+  // Reset viewport and gallery state when image changes
   useEffect(() => {
-    const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    setCurrentSlide(0);
+    resetZoom();
+    setImageError(false);
+    setIsDetailsExpanded(false);
+    setNaturalAspectRatio(null);
+  }, [image?.id]);
+
+  const handleWheelNavigation = (e: React.WheelEvent) => {
+    if (e.ctrlKey || zoomLevel > 1) {
+      e.preventDefault();
+      const zoomDelta = e.deltaY < 0 ? 0.25 : -0.25;
+      setZoomLevel(prev => {
+        const next = Math.min(4, Math.max(1, Math.round((prev + zoomDelta) * 100) / 100));
+        if (next === 1) {
+          panX.set(0);
+          panY.set(0);
+          dragX.set(0);
+        }
+        return next;
+      });
+      triggerZoomBadge();
+      return;
+    }
+    
+    // Smooth wheel scroll for next/prev video or post
+    const now = Date.now();
+    if (now - lastWheelNavRef.current > 350) {
+      if (e.deltaY > 20 && hasNext) {
+        lastWheelNavRef.current = now;
+        handleNavigateWithDirection('next');
+      } else if (e.deltaY < -20 && hasPrev) {
+        lastWheelNavRef.current = now;
+        handleNavigateWithDirection('prev');
+      }
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      touchStartYRef.current = e.touches[0].clientY;
+    }
+  };
+
+  const handleTouchMoveSwipe = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      handleTouchZoom(e);
+      return;
+    }
+    if (touchStartYRef.current !== null && e.touches.length === 1 && zoomLevel <= 1) {
+      const deltaY = e.touches[0].clientY - touchStartYRef.current;
+      if (Math.abs(deltaY) > 50) {
+        const now = Date.now();
+        if (now - lastWheelNavRef.current > 350) {
+          lastWheelNavRef.current = now;
+          if (deltaY < 0 && hasNext) {
+            handleNavigateWithDirection('next');
+          } else if (deltaY > 0 && hasPrev) {
+            handleNavigateWithDirection('prev');
+          }
+        }
+        touchStartYRef.current = null;
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (image && user) {
+      trackActivity(user.uid, [image.category, ...image.tags], 'view');
+    }
+  }, [image?.id, user?.uid]);
+
+  useEffect(() => {
+    if (showUploaderDetails && image?.userId) {
+      const unsub = onSnapshot(doc(db, COLLECTIONS.USERS, image.userId), (snap) => {
+        if (snap.exists()) setUploaderFullData(snap.data());
+      });
+      return () => unsub();
+    }
+  }, [showUploaderDetails, image?.userId]);
+
+  const handleModalLike = (e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Add small bubble at click point
+    const newBubbles = [{ id: `mod-bubble-${Math.random().toString(36).substring(2, 9)}-${Date.now()}`, x, y }];
+    
+    // Add big center pop if Liking (not unliking)
+    if (!hasLiked) {
+      newBubbles.push({ id: `center-pop-${Math.random().toString(36).substring(2, 9)}-${Date.now()}`, x: rect.width / 2, y: rect.height / 2 });
+    }
+    
+    setBubbles(prev => [...prev, ...newBubbles]);
+    onLike(e, image!);
+  };
+
+  const handleDoubleTap = (e: React.MouseEvent | React.TouchEvent) => {
+    const now = Date.now();
+    if (now - lastTouchRef.current < 300) {
+      // Double tap detected
+      const rect = mediaRef.current?.getBoundingClientRect();
+      if (rect) {
+        const x = rect.width / 2;
+        const y = rect.height / 2;
+        setBubbles(prev => [...prev, { id: `tap-bubble-${Math.random().toString(36).substring(2, 9)}-${Date.now()}`, x, y }]);
+        if (!hasLiked) {
+           onLike(e as any, image!);
+        }
+      }
+    }
+    lastTouchRef.current = now;
+  };
+
+  useEffect(() => {
+    if (image) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [!!image]);
+
+  const handleNavigateWithDirection = (dir: 'next' | 'prev') => {
+    setDirection(dir === 'next' ? 1 : -1);
+    onNavigate?.(dir);
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      const doc = document as any;
+      const isFs = !!(doc.fullscreenElement || doc.webkitFullscreenElement || doc.msFullscreenElement);
+      setIsFullscreen(isFs);
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' && hasNext) onNavigate?.('next');
-      if (e.key === 'ArrowLeft' && hasPrev) onNavigate?.('prev');
-      if (e.key === 'Escape') onClose();
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if (e.key === 'ArrowRight' && hasNext && zoomLevel <= 1) handleNavigateWithDirection('next');
+      if (e.key === 'ArrowLeft' && hasPrev && zoomLevel <= 1) handleNavigateWithDirection('prev');
+      if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      } else if (e.key === 'Escape') {
+        if (zoomLevel > 1) {
+          resetZoom();
+        } else {
+          onClose();
+        }
+      } else if (e.key === '+' || e.key === '=') {
+        handleZoomIn(0.25);
+      } else if (e.key === '-' || e.key === '_') {
+        handleZoomOut(0.25);
+      } else if (e.key === '0' || e.key === 'r' || e.key === 'R') {
+        resetZoom();
+      }
     };
 
     document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    document.addEventListener('msfullscreenchange', handleFsChange);
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+      document.removeEventListener('msfullscreenchange', handleFsChange);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [hasNext, hasPrev, onNavigate, onClose]);
+  }, [hasNext, hasPrev, onNavigate, onClose, zoomLevel]);
+
+  const [relatedImages, setRelatedImages] = useState<Image[]>([]);
+  const [loadingRelated, setLoadingRelated] = useState(false);
+
+  useEffect(() => {
+    if (!image) return;
+    
+    setZoomLevel(1);
+    setOffset({ x: 0, y: 0 });
+    dragX.set(0);
+    setCurrentSlide(0);
+    setLoadingRelated(true);
+
+    const fetchRelated = async () => {
+      try {
+        let fetched: Image[] = [];
+        const qCat = query(
+          collection(db, COLLECTIONS.IMAGES),
+          where('category', '==', image.category),
+          limit(30)
+        );
+        const snapCat = await getDocs(qCat);
+        fetched = snapCat.docs
+          .map(d => ({ ...d.data(), id: d.id } as Image))
+          .filter(img => img.id !== image.id);
+
+        if (fetched.length < 30) {
+          const qRecent = query(
+            collection(db, COLLECTIONS.IMAGES),
+            orderBy('timestamp', 'desc'),
+            limit(35)
+          );
+          const snapRecent = await getDocs(qRecent);
+          const recentFetched = snapRecent.docs
+            .map(d => ({ ...d.data(), id: d.id } as Image))
+            .filter(img => img.id !== image.id);
+          
+          fetched = [...fetched, ...recentFetched];
+        }
+
+        const unique = fetched.filter((img, idx, self) => 
+          img && img.id && idx === self.findIndex(t => t.id === img.id)
+        ).slice(0, 30);
+
+        setRelatedImages(unique);
+      } catch (e) {
+        console.warn("Related fetch failed", e);
+      } finally {
+        setLoadingRelated(false);
+      }
+    };
+
+    fetchRelated();
+  }, [image?.id, image?.category]);
+
+  const onClickRelated = (img: Image) => {
+    if (onSelectImage) {
+      onSelectImage(img);
+    }
+  };
 
   if (!image) return null;
 
   const toggleFullscreen = () => {
+    const nextFs = !isFullscreen;
+    setIsFullscreen(nextFs);
+    
+    // Always match immersive UI hides on mobile
     if (window.innerWidth < 768) {
-      setIsMobileUiHidden(!isMobileUiHidden);
-      return;
+      setIsMobileUiHidden(nextFs);
     }
-    if (!document.fullscreenElement) {
-      mediaRef.current?.requestFullscreen().catch(err => {
-        setIsMobileUiHidden(true);
-      });
-    } else {
-      document.exitFullscreen();
+
+    try {
+      const targetElem = (modalRef.current || document.documentElement) as any;
+      if (nextFs) {
+        if (targetElem?.requestFullscreen) {
+          targetElem.requestFullscreen().catch((err: any) => {
+            console.warn("Native fullscreen delayed or prevented:", err);
+          });
+        } else if (targetElem?.webkitRequestFullscreen) {
+          targetElem.webkitRequestFullscreen();
+        } else if (targetElem?.msRequestFullscreen) {
+          targetElem.msRequestFullscreen();
+        }
+      } else {
+        const doc = document as any;
+        if (doc.fullscreenElement || doc.webkitFullscreenElement || doc.msFullscreenElement) {
+          if (doc.exitFullscreen) {
+            doc.exitFullscreen().catch((err: any) => {
+              console.warn("Could not exit native fullscreen:", err);
+            });
+          } else if (doc.webkitExitFullscreen) {
+            doc.webkitExitFullscreen();
+          } else if (doc.msExitFullscreen) {
+            doc.msExitFullscreen();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Fullscreen API exception:", e);
     }
   };
 
@@ -84,12 +458,22 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
   
   // Restriction for normal users on premium assets
   const isProtected = image.isPremium && !user?.isPremium;
+  const isAdminUploader = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com'].includes(image.uploaderEmail || '');
 
   const handlePinchZoom = (e: React.WheelEvent) => {
     if (e.ctrlKey) {
       e.preventDefault();
       const delta = -e.deltaY;
-      setZoomLevel(prev => Math.min(4, Math.max(1, prev + delta * 0.01)));
+      setZoomLevel(prev => {
+        const next = Math.min(4, Math.max(1, Math.round((prev + delta * 0.01) * 100) / 100));
+        if (next === 1) {
+          panX.set(0);
+          panY.set(0);
+          dragX.set(0);
+        }
+        return next;
+      });
+      triggerZoomBadge();
     }
   };
 
@@ -103,8 +487,17 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
         lastTouchRef.current = distance;
       } else {
         const delta = distance - lastTouchRef.current;
-        setZoomLevel(prev => Math.min(4, Math.max(1, prev + delta * 0.01)));
+        setZoomLevel(prev => {
+          const next = Math.min(4, Math.max(1, Math.round((prev + delta * 0.012) * 100) / 100));
+          if (next === 1) {
+            panX.set(0);
+            panY.set(0);
+            dragX.set(0);
+          }
+          return next;
+        });
         lastTouchRef.current = distance;
+        triggerZoomBadge();
       }
     }
   };
@@ -114,13 +507,25 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
   };
 
   const getVideoEmbedUrl = (url: string) => {
-    // YouTube
-    const ytMatch = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
-    if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1`;
+    if (!url) return null;
+
+    // Google Drive embed
+    if (url.includes('drive.google.com')) {
+      const driveMatch = url.match(/(?:\/file\/d\/|id=)([\w-]+)/);
+      if (driveMatch) return `https://drive.google.com/file/d/${driveMatch[1]}/preview`;
+    }
+
+    // YouTube (including Shorts, embed, watch, youtu.be)
+    const ytMatch = url.match(/(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|shorts\/|watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+    if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&mute=1&enablejsapi=1`;
     
     // Vimeo
     const vimeoMatch = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
     if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}?autoplay=1`;
+
+    // Instagram
+    const instaMatch = url.match(/instagram\.com\/(?:p|reel|tv)\/([^\/?#&]+)/);
+    if (instaMatch) return `https://www.instagram.com/p/${instaMatch[1]}/embed/`;
     
     return null;
   };
@@ -128,38 +533,147 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
   const isDirectVideo = /\.(mp4|webm|ogg|mov)$/i.test(image.url);
   const embedUrl = getVideoEmbedUrl(image.url);
 
+  const isYoutube = /youtube\.com|youtu\.be/i.test(image.url);
+  const isYoutubeShort = isYoutube && image.url.toLowerCase().includes('/shorts/');
+  
+  // Robust check for portrait content (either from database or inferred from url characteristics)
+  const isInferredPortrait = image.aspectRatio === 'portrait' || 
+                             isYoutubeShort || 
+                             /portrait|vertical|reel|tiktok|9-16|9_16|9x16/i.test(image.url);
+
+  const ratio = isInferredPortrait ? 'portrait' : (image.aspectRatio || 'landscape');
+  const ratioStyle: React.CSSProperties = {
+    aspectRatio: ratio === 'landscape' ? '16/9' :
+                 ratio === 'portrait' ? '9/16' :
+                 ratio === 'square' ? '1/1' :
+                 ratio === 'ultrawide' ? '21/9' : '16/9',
+    maxWidth: '100%',
+    maxHeight: '100%',
+    width: ratio === 'landscape' || ratio === 'ultrawide' ? '100%' : 'auto',
+    height: ratio === 'portrait' || ratio === 'square' ? '100%' : 'auto'
+  };
+
   const handleDelete = async () => {
-    if (!user?.isAdmin || !window.confirm("Are you sure you want to permanently delete this asset?")) return;
+    const canDelete = user?.isAdmin || (user && (image.userId === user.uid || (image.uploaderEmail && user.email === image.uploaderEmail)));
+    if (!canDelete || !window.confirm("Are you sure you want to permanently delete this asset?")) return;
     setIsDeleting(true);
     try {
       await deleteDoc(doc(db, COLLECTIONS.IMAGES, image.id));
       onClose();
-    } catch (e) {
-      console.error(e);
-      alert("Failed to delete image.");
+    } catch (e: any) {
+      console.error("Delete failed:", e);
+      alert(`Field transmission failed: ${e.message || "Unknown interference"}`);
+    } finally {
       setIsDeleting(false);
     }
   };
 
+
   const handleShare = async () => {
-    try {
+    if (isProtected) {
+      alert("Aether Protocol: Sharing restricted for premium assets. Please upgrade to Divine Curator status.");
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}/?post=${image.id}`;
+    const originalHostingLink = image.externalLink || 
+      (image.url && image.url.startsWith('http') && !image.url.includes('firebasestorage') && !image.url.includes('blob:') ? image.url : null);
+
+    const isYoutubeOnly = /youtube\.com|youtu\.be/i.test(image.url) || 
+      (originalHostingLink ? /youtube\.com|youtu\.be/i.test(originalHostingLink) : false);
+
+    let shareText = `✨ Aether Sanctuary – Manifestation of Vision ✨\n\n` +
+      `🌌 Title: ${image.title}\n` +
+      (image.description ? `🌿 Description: ${image.description}\n` : '') +
+      (image.category ? `🏷️ Category: ${image.category}\n` : '') +
+      (image.uploaderName ? `✍️ Curated by: ${image.uploaderName}\n` : '');
+
+    if (originalHostingLink) {
+      shareText += `🌐 Original Hosting Source: ${originalHostingLink}\n`;
+    }
+
+    shareText += `🔗 View post in app: ${shareUrl}\n\n` +
+      `Join the Aether digital gallery, an aesthetic sanctuary for high-resolution vision and design exploration. Let's create together!\n` +
+      `👉 ${window.location.origin}`;
+
+    const shareData: ShareData = {
+      title: image.title,
+      text: shareText,
+      url: shareUrl,
+    };
+
+    if (user) trackActivity(user.uid, [image.category, ...image.tags], 'share');
+
+    // 1. YouTube-only videos: Share hosting link and Aether message only (skip binary blob fetch)
+    if (isYoutubeOnly) {
       if (navigator.share) {
-        await navigator.share({
-          title: image.title,
-          text: image.description,
-          url: window.location.href,
-        });
-      } else {
-        await navigator.clipboard.writeText(window.location.href);
-        alert('Link copied to clipboard!');
+        try {
+          await navigator.share(shareData);
+          return;
+        } catch (err) {
+          console.warn("YouTube share canceled or unsupported:", err);
+        }
       }
-    } catch (error) {
-      console.error('Error sharing:', error);
+      const success = await copyToClipboard(`${shareText}\n${shareUrl}`);
+      if (success) {
+        alert("YouTube post link and hosting details copied to clipboard!");
+      }
+      return;
+    }
+
+    // 2. Try file sharing with media file (image or video file) + unique post link + hosting source
+    const targetMedia = image.url || image.thumbnailUrl;
+    if (targetMedia) {
+      try {
+        const response = await fetch(targetMedia);
+        if (response.ok) {
+          const blob = await response.blob();
+          const ext = blob.type.split('/')[1] || (image.type === 'video' ? 'mp4' : 'jpg');
+          const cleanTitle = image.title.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const file = new File([blob], `${cleanTitle}_Aether.${ext}`, { type: blob.type });
+
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              ...shareData,
+              files: [file],
+            });
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Media share file fetch failed, falling back to link/text share:", err);
+      }
+    }
+
+    // 3. Fallback: Generic Navigator Share
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch (err) {
+        console.warn("Navigator share failed:", err);
+      }
+    }
+
+    // 4. Absolute Fallback: Clipboard
+    const success = await copyToClipboard(`${shareText}\n${shareUrl}`);
+    if (success) {
+      alert("Unique post link, hosting source, and curation details copied to clipboard!");
+    } else {
+      console.warn("Clipboard fallback failed.");
+    }
+  };
+
+  const handleCopyLink = async () => {
+    const shareUrl = `${window.location.origin}/?post=${image.id}`;
+    const success = await copyToClipboard(shareUrl);
+    if (success) {
+      alert("Unique post link copied to clipboard!");
     }
   };
 
   const handleDownload = async () => {
-    if (!image.url) return;
+    if (!image.url || isProtected) return;
     setIsDownloading(true);
     try {
       if (image.type === 'video' && !isDirectVideo) {
@@ -216,68 +730,84 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="fixed inset-0 bg-black/95 backdrop-blur-md cursor-pointer"
+          className="fixed inset-0 bg-bg-dark/95 backdrop-blur-md cursor-pointer"
         />
 
-        {/* Universal Close Button - Refined & Accessible */}
-        <motion.button
-          initial={{ opacity: 0, scale: 0.5, rotate: -90 }}
-          animate={{ opacity: 1, scale: 1, rotate: 0 }}
-          exit={{ opacity: 0, scale: 0.5, rotate: 90 }}
-          onClick={onClose}
-          className="fixed top-4 left-4 md:top-6 md:left-6 lg:top-8 lg:left-8 z-[150] w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/10 backdrop-blur-xl text-white hover:bg-brand-primary hover:text-white transition-all shadow-[0_4px_20px_rgba(0,0,0,0.5)] active:scale-90 group flex items-center justify-center border border-white/20"
-          aria-label="Close modal"
-        >
-          <X className="w-5 h-5 md:w-6 md:h-6 group-hover:rotate-90 transition-transform duration-300" />
-          <span className="sr-only">Close</span>
-        </motion.button>
-        
+
         <motion.div
+          ref={modalRef}
           initial={{ opacity: 0, scale: 0.9, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.9, y: 20 }}
           className={cn(
-            "relative w-full h-[100dvh] md:h-[90vh] md:max-h-[850px] max-w-7xl glass-dark md:rounded-[40px] overflow-hidden flex flex-col lg:flex-row shadow-[0_0_100px_rgba(0,0,0,1)] bg-card-dark z-[101]",
-            isMobileUiHidden && "h-screen"
+            isFullscreen
+              ? "fixed inset-0 w-screen h-screen max-w-none max-h-none h-full w-full rounded-none border-none z-[99999] bg-black p-0 m-0 overflow-hidden flex flex-col"
+              : "relative w-full h-[92dvh] max-h-[920px] max-w-4xl glass-dark md:rounded-[36px] overflow-y-auto no-scrollbar flex flex-col shadow-[0_0_100px_rgba(0,0,0,1)] bg-card-dark z-[101] border border-white/10",
+            !isFullscreen && isMobileUiHidden && "h-screen"
           )}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Internal Close Button (Mobile Only) - Fallback */}
-          {!isMobileUiHidden && (
-            <button
-              onClick={onClose}
-              className="md:hidden absolute top-4 left-4 z-[110] p-3 rounded-full bg-black/60 text-white backdrop-blur-md border border-white/10"
-            >
-              <X className="w-6 h-6" />
-            </button>
-          )}
-
-          {/* Media Section */}
-          <div 
-            ref={mediaRef}
-            className={cn(
-              "flex-none lg:flex-1 bg-black flex items-center justify-center p-0 md:p-6 relative group overflow-hidden select-none transition-all duration-500",
-              isMobileUiHidden ? "h-screen" : "h-[45vh] lg:h-full"
-            )}
-            onWheel={handlePinchZoom}
-            onTouchMove={handleTouchZoom}
-            onTouchEnd={handleTouchEnd}
-            onContextMenu={(e) => isProtected && e.preventDefault()}
+          {/* Universal Absolute Top Right Close Button */}
+          <button 
+            onClick={isFullscreen ? toggleFullscreen : onClose}
+            className="absolute top-4 right-4 md:top-6 md:right-6 z-[150] p-2.5 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-text-dim hover:text-brand-primary hover:border-brand-primary/30 transition-all cursor-pointer shadow-2xl active:scale-95 group"
+            title={isFullscreen ? "Exit Device Fullscreen (Esc / F)" : "Close Details"}
           >
-            {isPremiumLocked ? (
-              <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/40 backdrop-blur-2xl p-10 text-center space-y-6">
+            {isFullscreen ? <Minimize2 className="w-5 h-5 text-brand-primary" /> : <X className="w-5 h-5 group-hover:rotate-90 transition-all duration-300" />}
+          </button>
+
+            {/* Media Section */}
+            <div 
+              ref={mediaRef}
+              className={cn(
+                "w-full bg-bg-dark flex items-center justify-center relative group overflow-hidden select-none transition-all duration-300 shrink-0",
+                isFullscreen ? "fixed inset-0 w-screen h-screen bg-black z-[120] p-0 m-0 flex-1 max-h-none min-h-0" : 
+                isMobileUiHidden ? "h-screen p-2 md:p-6" : "min-h-[350px] md:min-h-[460px] max-h-[60vh] rounded-t-[36px] p-2 md:p-6"
+              )}
+              onWheel={handleWheelNavigation}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMoveSwipe}
+              onTouchEnd={handleTouchEnd}
+              onClick={handleDoubleTap}
+              onContextMenu={(e) => isProtected && e.preventDefault()}
+            >
+              {/* Background Ambient Blur */}
+              <motion.div 
+                key={`ambient-${image.id}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0.4 }}
+                className="absolute inset-[-100px] z-0 pointer-events-none"
+              >
+                <img src={image.urls?.[0] || image.url} alt="" className="w-full h-full object-cover blur-[120px] scale-150 opacity-50" />
+                <div className="absolute inset-0 bg-bg-dark/40" />
+              </motion.div>
+
+              <AnimatePresence>
+                {bubbles.map(bubble => (
+                  <HeartBubble 
+                    key={bubble.id} 
+                    id={bubble.id}
+                    x={bubble.x} 
+                    y={bubble.y} 
+                    onComplete={() => setBubbles(prev => prev.filter(b => b.id !== bubble.id))} 
+                  />
+                ))}
+              </AnimatePresence>
+
+              {isPremiumLocked ? (
+              <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-bg-dark/40 backdrop-blur-2xl p-10 text-center space-y-6">
                 <div className="w-20 h-20 bg-amber-500/20 text-amber-500 rounded-full flex items-center justify-center animate-pulse">
                   <Sparkles className="w-10 h-10" />
                 </div>
                 <div className="space-y-3">
-                  <h3 className="text-2xl font-display font-bold text-white uppercase tracking-tight">Premium Sanctuary Asset</h3>
+                  <h3 className="text-2xl font-display font-bold text-text-main uppercase tracking-tight">Premium Sanctuary Asset</h3>
                   <p className="text-text-dim text-sm max-w-xs mx-auto leading-relaxed">This exclusive moment is reserved for Divine Curators. Upgrade your presence to unlock the full clarity.</p>
                 </div>
                 {!isMobileUiHidden && (
                   <Link 
                     to="/upgrade" 
                     onClick={onClose}
-                    className="px-10 py-4 bg-white text-bg-dark rounded-2xl font-display font-black uppercase tracking-widest text-xs hover:scale-105 transition-transform"
+                    className="px-10 py-4 bg-text-main text-bg-dark rounded-2xl font-display font-black uppercase tracking-widest text-xs hover:scale-105 transition-transform"
                   >
                     Upgrade to View
                   </Link>
@@ -285,56 +815,229 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
               </div>
             ) : null}
 
+            {/* Video Scroll for Next Video Floating Controls */}
+            {image.type === 'video' && (
+              <div className="absolute right-3 md:right-5 top-1/2 -translate-y-1/2 z-[140] flex flex-col items-center gap-1.5 bg-black/80 backdrop-blur-2xl p-2 rounded-2xl border border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.8)]">
+                {hasPrev && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('prev'); }}
+                    className="p-2.5 bg-white/10 hover:bg-brand-primary text-white rounded-xl transition-all active:scale-90 flex items-center justify-center cursor-pointer"
+                    title="Previous Video (Scroll Up)"
+                  >
+                    <ChevronLeft className="w-5 h-5 rotate-90" />
+                  </button>
+                )}
+                <div className="py-2 px-1 flex flex-col items-center select-none">
+                  <span className="text-[8px] font-black uppercase tracking-widest text-white/70 rotate-90 my-3 whitespace-nowrap">
+                    Scroll
+                  </span>
+                </div>
+                {hasNext && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('next'); }}
+                    className="p-2.5 bg-brand-primary hover:bg-brand-primary/80 text-white rounded-xl transition-all active:scale-90 animate-pulse flex items-center justify-center cursor-pointer"
+                    title="Next Video (Scroll Down)"
+                  >
+                    <ChevronRight className="w-5 h-5 rotate-90" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Video Content */}
+
             {image.type === 'video' ? (
-               <div className="w-full h-full flex items-center justify-center bg-black relative">
+               <div className={cn(
+                 "w-full flex flex-col justify-between items-center bg-bg-dark relative overflow-hidden",
+                 isFullscreen ? "h-full flex-1 p-0 m-0" : "h-full p-1 md:p-6"
+               )}>
+                 <div className="w-full flex-1 relative flex items-center justify-center min-h-0 w-full h-full">
                   {embedUrl ? (
-                    <iframe
-                      src={embedUrl}
-                      className="absolute inset-0 w-full h-full md:relative md:rounded-2xl border-0 shadow-2xl"
-                      allow="autoplay; fullscreen; picture-in-picture"
-                      allowFullScreen
-                      title={image.title}
-                    />
-                  ) : isDirectVideo ? (
-                    <video
-                      src={image.url}
-                      poster={image.thumbnailUrl}
-                      controls
-                      autoPlay
-                      className="absolute inset-0 w-full h-full md:relative md:object-contain md:rounded-2xl"
-                    />
+                    <div 
+                      className={cn(
+                        "overflow-hidden flex items-center justify-center relative w-full h-full",
+                        isFullscreen ? "max-h-none rounded-none" : "rounded-2xl shadow-2xl max-h-[80vh]"
+                      )}
+                      style={!isFullscreen && naturalAspectRatio ? { aspectRatio: `${naturalAspectRatio}` } : undefined}
+                    >
+                      <iframe
+                        src={embedUrl}
+                        className="w-full h-full border-0 object-contain"
+                        allow="autoplay; fullscreen; picture-in-picture"
+                        allowFullScreen
+                        title={image.title}
+                      />
+                    </div>
                   ) : (
-                    <div className="p-10 text-center space-y-4">
-                       <AlertCircle className="w-12 h-12 text-brand-primary mx-auto" />
-                       <p className="text-white font-bold">Unsupported Video Format</p>
-                       <p className="text-xs text-text-dim">Try a YouTube, Vimeo, or a direct link (.mp4, .webm)</p>
-                       <a href={image.url} target="_blank" className="inline-block mt-4 px-6 py-2 bg-brand-primary rounded-full text-xs font-bold text-white uppercase tracking-widest">Open in External Player</a>
+                    <div 
+                      className={cn(
+                        "overflow-hidden flex items-center justify-center relative bg-black/40 w-full h-full",
+                        isFullscreen ? "max-h-none rounded-none" : "rounded-2xl shadow-2xl max-h-[80vh]"
+                      )}
+                      style={!isFullscreen && naturalAspectRatio ? { aspectRatio: `${naturalAspectRatio}` } : undefined}
+                    >
+                      <video
+                        ref={videoRef}
+                        src={image.url}
+                        poster={image.thumbnailUrl}
+                        controls
+                        autoPlay
+                        muted={isMuted}
+                        onLoadedMetadata={(e) => {
+                          const v = e.currentTarget;
+                          if (v.videoWidth && v.videoHeight) {
+                            setNaturalAspectRatio(v.videoWidth / v.videoHeight);
+                          }
+                        }}
+                        className="w-full h-full object-contain"
+                      />
                     </div>
                   )}
+                 </div>
                </div>
             ) : (
               <div className="relative w-full h-full overflow-hidden flex items-center justify-center">
+                <AnimatePresence initial={false} custom={direction} mode="popLayout">
+                  <motion.div
+                    key={`${image.id}-${currentSlide}`}
+                    custom={direction}
+                    variants={slideVariants}
+                    initial="enter"
+                    animate="center"
+                    exit="exit"
+                    transition={{
+                      x: { type: "tween", duration: 0.22, ease: "easeOut" },
+                      opacity: { duration: 0.15 }
+                    }}
+                    className="w-full h-full flex items-center justify-center absolute"
+                  >
+              <div 
+                ref={containerRef}
+                style={!isFullscreen && naturalAspectRatio ? { aspectRatio: `${naturalAspectRatio}` } : undefined}
+                className={cn(
+                  "overflow-hidden no-scrollbar flex items-center justify-center relative w-full h-full",
+                  isFullscreen ? "max-w-none max-h-none rounded-none" : "rounded-2xl shadow-2xl max-w-full max-h-[80vh]"
+                )}
+                onWheel={handleWheelNavigation}
+              >
+                {/* Visual Zoom Badge */}
+                <AnimatePresence>
+                  {showZoomBadge && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.8, y: -10 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute top-4 left-1/2 -translate-x-1/2 z-[150] bg-black/85 backdrop-blur-xl text-white border border-white/20 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold shadow-2xl pointer-events-none flex items-center gap-1.5"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5 text-brand-primary" />
+                      <span>{Math.round(zoomLevel * 100)}%</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 <motion.img
-                  key={image.id}
-                  style={{ x: dragX, opacity: swipeOpacity, cursor: zoomLevel > 1 ? 'grab' : 'zoom-in' }}
+                  style={{
+                    x: zoomLevel > 1 ? panX : dragX,
+                    y: zoomLevel > 1 ? panY : 0,
+                    opacity: zoomLevel > 1 ? 1 : swipeOpacity,
+                    cursor: zoomLevel > 1 ? 'grab' : 'zoom-in',
+                    touchAction: zoomLevel > 1 ? 'none' : 'pan-y'
+                  }}
                   drag={zoomLevel > 1 ? true : "x"}
-                  dragConstraints={zoomLevel > 1 ? { left: -500, right: 500, top: -500, bottom: 500 } : { left: 0, right: 0 }}
-                  onDragEnd={handleDragEnd}
-                  animate={{ scale: zoomLevel }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                  src={image.url}
+                  dragConstraints={
+                    zoomLevel > 1 && containerRef.current
+                      ? {
+                          left: -Math.max(0, (containerRef.current.clientWidth * (zoomLevel - 1)) / 2),
+                          right: Math.max(0, (containerRef.current.clientWidth * (zoomLevel - 1)) / 2),
+                          top: -Math.max(0, (containerRef.current.clientHeight * (zoomLevel - 1)) / 2),
+                          bottom: Math.max(0, (containerRef.current.clientHeight * (zoomLevel - 1)) / 2)
+                        }
+                      : { left: 0, right: 0 }
+                  }
+                  dragElastic={zoomLevel > 1 ? 0.08 : 0.8}
+                  onDragEnd={(e, info) => {
+                    if (zoomLevel > 1) return;
+                    
+                    const swipeThreshold = 100;
+                    const velocityThreshold = 500;
+                    const isSwipeNext = info.offset.x < -swipeThreshold || info.velocity.x < -velocityThreshold;
+                    const isSwipePrev = info.offset.x > swipeThreshold || info.velocity.x > velocityThreshold;
+
+                    if (isSwipeNext) {
+                      if (image.urls && currentSlide < image.urls.length - 1) {
+                        setDirection(1);
+                        setCurrentSlide(prev => prev + 1);
+                      } else if (hasNext) {
+                        handleNavigateWithDirection('next');
+                      }
+                    } else if (isSwipePrev) {
+                      if (image.urls && currentSlide > 0) {
+                        setDirection(-1);
+                        setCurrentSlide(prev => prev - 1);
+                      } else if (hasPrev) {
+                        handleNavigateWithDirection('prev');
+                      }
+                    }
+                    dragX.set(0);
+                  }}
+                  animate={{ 
+                    scale: zoomLevel,
+                    transition: { type: 'spring', damping: 28, stiffness: 220 }
+                  }}
+                  src={image.urls && image.urls[currentSlide] ? image.urls[currentSlide] : image.url}
                   alt={image.title}
                   draggable={!isProtected}
                   referrerPolicy="no-referrer"
-                  onLoad={() => setImageError(false)}
+                  onDoubleClick={(e) => {
+                    if (isProtected) return;
+                    e.stopPropagation();
+                    handleToggleZoomAtPoint();
+                  }}
+                  onClick={() => {
+                    if (isProtected) return;
+                    if (window.innerWidth < 768) {
+                      if (zoomLevel > 1) {
+                        resetZoom();
+                      } else {
+                        setIsMobileUiHidden(!isMobileUiHidden);
+                      }
+                    }
+                  }}
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    if (img.naturalWidth && img.naturalHeight) {
+                      setNaturalAspectRatio(img.naturalWidth / img.naturalHeight);
+                    }
+                    setImageError(false);
+                  }}
                   onError={() => setImageError(true)}
                   className={cn(
-                    "max-w-full max-h-full object-contain cursor-zoom-in transition-opacity duration-300",
+                    "w-full h-full object-contain transition-opacity duration-300 select-none",
                     imageError ? "opacity-20" : "opacity-100",
                     isProtected && "pointer-events-none"
                   )}
-                  onClick={() => !isProtected && setZoomLevel(prev => prev === 1 ? 2 : 1)}
                 />
+              </div>
+            </motion.div>
+          </AnimatePresence>
+
+                {/* Gallery Dots */}
+                {image.urls && image.urls.length > 1 && (
+                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-2 z-50 p-2 bg-bg-dark/20 backdrop-blur-md rounded-full shadow-2xl">
+                    {image.urls.map((url, i) => (
+                      <button
+                        key={`media-dot-${image.id}-${i}-${url.substring(0, 10)}`}
+                        onClick={(e) => { e.stopPropagation(); setCurrentSlide(i); }}
+                        className={cn(
+                          "w-2 h-2 rounded-full transition-all duration-300",
+                          currentSlide === i ? "bg-brand-primary w-6 shadow-[0_0_10px_var(--brand-primary)]" : "bg-text-main/40 hover:bg-text-main/60"
+                        )}
+                      />
+                    ))}
+                  </div>
+                )}
+
 
                 {isProtected && !isPremiumLocked && (
                   <div 
@@ -344,78 +1047,109 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
                   />
                 )}
                 
-                {/* Fullscreen Toggle / Immersive Mode */}
-                <button 
-                  onClick={toggleFullscreen}
-                  className={cn(
-                    "absolute top-6 right-6 z-40 p-3 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white transition-all hover:bg-brand-primary active:scale-90 shadow-2xl flex items-center justify-center",
-                    isMobileUiHidden ? "opacity-100" : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
-                  )}
-                  title={isMobileUiHidden ? "Exit Immersive Mode" : "Enter Immersive Mode"}
-                >
-                  {isFullscreen || isMobileUiHidden ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
-                </button>
-
-                {/* Mobile Specific Indicator (Helpful for first-time users) */}
-                {!isMobileUiHidden && (
-                  <div className="md:hidden absolute bottom-6 right-6 z-40 p-3 rounded-full bg-brand-primary text-white shadow-lg animate-bounce pointer-events-none opacity-20">
-                    <Maximize2 className="w-4 h-4" />
-                  </div>
-                )}
-
-                {/* Navigation Arrows */}
+                {/* Navigation Arrows - Sleek & Refined */}
                 {hasPrev && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); onNavigate?.('prev'); }}
+                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('prev'); }}
                     className={cn(
-                      "absolute left-4 top-1/2 -translate-y-1/2 z-40 p-4 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white transition-all md:opacity-0 md:group-hover:opacity-100 flex items-center justify-center active:scale-90 shadow-2xl",
-                      isMobileUiHidden ? "opacity-0 pointer-events-none" : "opacity-100"
+                      "absolute left-3 top-1/2 -translate-y-1/2 z-[60] w-10 h-10 rounded-full bg-black/40 hover:bg-black/70 backdrop-blur-xl border border-white/10 text-white transition-all flex items-center justify-center active:scale-90 shadow-lg group/nav",
+                      isMobileUiHidden ? "opacity-0 pointer-events-none" : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
                     )}
                     aria-label="Previous post"
                   >
-                    <ChevronLeft className="w-6 h-6" />
+                    <ChevronLeft className="w-5 h-5 group-hover/nav:-translate-x-0.5 transition-transform" />
                   </button>
                 )}
                 {hasNext && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); onNavigate?.('next'); }}
+                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('next'); }}
                     className={cn(
-                      "absolute right-4 top-1/2 -translate-y-1/2 z-40 p-4 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white transition-all md:opacity-0 md:group-hover:opacity-100 flex items-center justify-center active:scale-90 shadow-2xl",
-                      isMobileUiHidden ? "opacity-0 pointer-events-none" : "opacity-100"
+                      "absolute right-3 top-1/2 -translate-y-1/2 z-[60] w-10 h-10 rounded-full bg-black/40 hover:bg-black/70 backdrop-blur-xl border border-white/10 text-white transition-all flex items-center justify-center active:scale-90 shadow-lg group/nav",
+                      isMobileUiHidden ? "opacity-0 pointer-events-none" : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
                     )}
                     aria-label="Next post"
                   >
-                    <ChevronRight className="w-6 h-6" />
+                    <ChevronRight className="w-5 h-5 group-hover/nav:translate-x-0.5 transition-transform" />
                   </button>
                 )}
                 
-                {/* Zoom Controls */}
+                {/* Bottom-Centered Sleek Zoom Control Bar */}
                 {!isProtected && (
-                  <div className={cn(
-                    "absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 backdrop-blur-xl border border-white/20 p-1.5 rounded-2xl transition-opacity z-30 shadow-2xl",
-                    isMobileUiHidden ? "opacity-0 pointer-events-none" : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
-                  )}>
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[140] flex items-center gap-1.5 bg-black/85 backdrop-blur-2xl border border-white/20 p-1.5 px-3 rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.7)]">
                     <button 
-                      onClick={() => setZoomLevel(Math.max(1, zoomLevel - 0.5))}
-                      className="p-2 hover:bg-white/10 rounded-xl text-white transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleZoomOut(0.25);
+                      }}
+                      disabled={zoomLevel <= 1}
+                      className={cn(
+                        "p-1.5 rounded-full transition-all flex items-center justify-center cursor-pointer",
+                        zoomLevel <= 1
+                          ? "text-white/30 cursor-not-allowed"
+                          : "text-white hover:bg-brand-primary hover:text-bg-dark active:scale-90"
+                      )}
+                      title="Zoom Out (-)"
                     >
-                      <ZoomOut className="w-4 h-4" />
+                      <ZoomOut className="w-3.5 h-3.5" />
                     </button>
-                    <span className="text-[10px] font-bold text-white w-12 text-center uppercase tracking-widest">
-                      {Math.round(zoomLevel * 100)}%
-                    </span>
+
+                    <div className="h-4 w-px bg-white/15 mx-0.5" />
+
+                    {/* Preset Quick Buttons */}
+                    <div className="flex items-center gap-1">
+                      {[1, 1.5, 2, 3].map((level) => (
+                        <button
+                          key={`zoom-preset-${level}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (level === 1) {
+                              resetZoom();
+                            } else {
+                              setZoomLevel(level);
+                              triggerZoomBadge();
+                            }
+                          }}
+                          className={cn(
+                            "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer select-none",
+                            Math.abs(zoomLevel - level) < 0.1
+                              ? "bg-brand-primary text-bg-dark shadow-[0_0_12px_rgba(var(--brand-primary-rgb),0.5)] font-bold"
+                              : "text-white/70 hover:text-white hover:bg-white/10"
+                          )}
+                          title={`Zoom to ${level * 100}%`}
+                        >
+                          {level === 1 ? '100%' : `${level}x`}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="h-4 w-px bg-white/15 mx-0.5" />
+
                     <button 
-                      onClick={() => setZoomLevel(Math.min(3, zoomLevel + 0.5))}
-                      className="p-2 hover:bg-white/10 rounded-xl text-white transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleZoomIn(0.25);
+                      }}
+                      disabled={zoomLevel >= 4}
+                      className={cn(
+                        "p-1.5 rounded-full transition-all flex items-center justify-center cursor-pointer",
+                        zoomLevel >= 4
+                          ? "text-white/30 cursor-not-allowed"
+                          : "text-white hover:bg-brand-primary hover:text-bg-dark active:scale-90"
+                      )}
+                      title="Zoom In (+)"
                     >
-                      <ZoomIn className="w-4 h-4" />
+                      <ZoomIn className="w-3.5 h-3.5" />
                     </button>
-                    <div className="w-px h-4 bg-white/10 mx-1" />
-                    <button 
-                      onClick={() => setZoomLevel(1)}
-                      className="p-2 hover:bg-white/10 rounded-xl text-white transition-colors"
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        resetZoom();
+                      }}
+                      className="p-1.5 text-white/70 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-90 flex items-center justify-center cursor-pointer ml-0.5"
+                      title="Reset Zoom & Pan (0 / R)"
                     >
-                      <Maximize2 className="w-4 h-4" />
+                      <RotateCcw className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 )}
@@ -423,181 +1157,410 @@ export default function ImageModal({ image, onClose, onLike, hasLiked, user, onN
             )}
 
             {imageError && (
-               <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center space-y-4 z-10 bg-black/60 backdrop-blur-sm">
-                  <div className="p-4 bg-red-500/10 rounded-3xl">
-                    <AlertCircle className="w-8 h-8 md:w-12 md:h-12 text-red-500" />
+               <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center space-y-4 z-10 bg-bg-dark/80 backdrop-blur-md">
+                  <div className="p-4 bg-brand-primary/10 border border-brand-primary/20 rounded-3xl text-brand-primary shadow-xl">
+                    <ExternalLink className="w-8 h-8 md:w-12 md:h-12" />
                   </div>
                   <div className="max-w-xs space-y-2">
-                    <h3 className="text-lg md:text-xl font-bold text-white">Visibility Issue</h3>
+                    <h3 className="text-lg md:text-xl font-bold text-text-main">Hosted External Link</h3>
                     <p className="text-xs md:text-sm text-text-dim leading-relaxed">
-                      Source is blocking display or link has expired. 
+                      This post is hosted directly via an external web source.
                     </p>
                   </div>
+                  <a
+                    href={image.externalLink || image.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-6 py-3 bg-brand-primary text-bg-dark font-black text-xs uppercase tracking-wider rounded-xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 cursor-pointer shadow-xl"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Open Original Hosted Link
+                  </a>
                </div>
             )}
-            
-            {/* Source Link Overlay */}
-            <div className="absolute top-6 left-6 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-              <a
-                href={image.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2 bg-black/50 backdrop-blur-md border border-white/10 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-white/10 transition-all text-white"
+
+            {/* Action Bar (Top Left) - Universal Floating Controls */}
+            <div className="absolute top-4 left-4 md:top-6 md:left-6 z-[140] flex items-center gap-3">
+              {/* Fullscreen Toggle / Immersive Mode */}
+              <button 
+                onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+                className={cn(
+                  "p-3 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-text-main hover:text-brand-primary transition-all hover:bg-black/90 active:scale-90 shadow-2xl flex items-center justify-center cursor-pointer group/fs"
+                )}
+                title={isFullscreen ? "Exit Device Fullscreen (Esc / F)" : "View in Fullscreen of Device (F)"}
               >
-                <ExternalLink className="w-3 h-3" /> View Source
-              </a>
+                {isFullscreen ? <Minimize2 className="w-5 h-5 text-brand-primary group-hover/fs:scale-110 transition-transform" /> : <Maximize2 className="w-5 h-5 group-hover/fs:scale-110 transition-transform" />}
+              </button>
             </div>
-          </div>
-
-          {/* Sidebar Area */}
-          <motion.div 
-            animate={{ x: isMobileUiHidden ? 480 : 0 }}
-            className={cn(
-              "w-full lg:w-[400px] xl:w-[480px] flex-none flex flex-col border-t lg:border-t-0 lg:border-l border-white/5 overflow-y-auto bg-card-dark md:bg-transparent custom-scrollbar transition-all duration-300",
-              isMobileUiHidden && "hidden lg:flex"
-            )}
-          >
-            <div className="p-5 md:p-8 lg:p-10 space-y-6 md:space-y-10 flex-1">
-              {/* Header Info */}
-              <div className="space-y-3 md:space-y-4">
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-1 bg-brand-primary/10 text-brand-primary text-[9px] md:text-[10px] font-extrabold uppercase tracking-[0.2em] rounded-full">
-                    {image.category}
-                  </span>
-                  <span className="flex items-center gap-1.5 text-text-dim text-[9px] md:text-[10px] font-bold uppercase tracking-widest">
-                    <Clock className="w-3 h-3" /> {formatDate(image.timestamp)}
-                  </span>
-                </div>
-                <h2 className="text-xl md:text-3xl font-display font-extrabold tracking-tight text-white leading-tight">
-                  {image.title}
-                </h2>
-                <p className="text-text-dim text-xs md:text-sm leading-relaxed">
-                  {image.description}
-                </p>
-              </div>
-
-              {/* Primary Actions Grid */}
-              <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-4 gap-2 md:gap-3 py-6 border-y border-white/5">
-                <button
-                  onClick={(e) => onLike(e, image)}
-                  className={cn(
-                    "col-span-2 flex items-center justify-center gap-2 h-12 md:h-14 rounded-xl md:rounded-2xl font-bold transition-all active:scale-95",
-                    hasLiked
-                      ? "bg-red-500 text-white shadow-lg shadow-red-500/20"
-                      : "bg-white/5 text-text-main border border-white/10 hover:bg-white/10"
-                  )}
-                >
-                  <Heart className={cn("w-5 h-5", hasLiked && "fill-current")} />
-                  <span className="text-sm">{hasLiked ? 'Liked' : 'Like'}</span>
-                </button>
-
-                <button
-                  onClick={() => setIsCollectionsOpen(true)}
-                  className="h-12 md:h-14 rounded-xl md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-text-main hover:bg-white/10 transition-all active:scale-90"
-                  title="Save"
-                >
-                  <BookmarkPlus className="w-5 h-5" />
-                </button>
-
-                <button
-                  onClick={handleShare}
-                  className="h-12 md:h-14 rounded-xl md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-text-main hover:bg-white/10 transition-all active:scale-90"
-                  title="Share"
-                >
-                  <Share2 className="w-5 h-5" />
-                </button>
-
-                {!embedUrl && !isProtected && (
-                  <button
-                    onClick={handleDownload}
-                    disabled={isDownloading}
-                    className={cn(
-                        "h-12 md:h-14 rounded-xl md:rounded-2xl bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center text-brand-primary hover:bg-brand-primary hover:text-white transition-all active:scale-90",
-                        isDownloading && "opacity-50"
-                    )}
-                    title="Download"
+            </div>
+            
+            {!isFullscreen && (
+              /* Post Content Area - Single Scrollable Flow Below Media */
+              <div className="w-full flex-1 flex flex-col p-5 md:p-8 space-y-6 bg-card-dark/60">
+                {/* 1. Clickable Post Title */}
+                <div className="space-y-3">
+                  <button 
+                    onClick={() => setIsDetailsExpanded(!isDetailsExpanded)}
+                    className="w-full text-left p-4 bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 hover:border-brand-primary/40 rounded-2xl cursor-pointer transition-all group select-none flex items-center justify-between gap-3 shadow-lg"
+                    title="Click to view uploader & post details"
                   >
-                    {isDownloading ? (
-                      <div className="w-4 h-4 border-2 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin" />
-                    ) : (
-                      <Download className="w-5 h-5" />
-                    )}
-                  </button>
-                )}
-                
-                {isProtected && !embedUrl && (
-                  <div className="h-12 md:h-14 rounded-xl md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-text-dim opacity-40 cursor-not-allowed" title="Download restricted">
-                    <Download className="w-5 h-5" />
-                  </div>
-                )}
-                
-                <div className="relative">
-                  <button
-                    onClick={() => setReportTypeOpen(!reportTypeOpen)}
-                    className={cn(
-                        "w-full h-12 md:h-14 rounded-xl md:rounded-2xl border flex items-center justify-center transition-all active:scale-90",
-                        reportTypeOpen ? "bg-red-500/10 border-red-500/50 text-red-500" : "bg-white/5 border-white/10 text-text-dim hover:text-red-400 hover:bg-red-400/5"
-                    )}
-                  >
-                    <Flag className="w-5 h-5" />
-                  </button>
-                  {reportTypeOpen && (
-                    <div className="absolute bottom-full right-0 mb-4 w-40 bg-card-dark border border-border-dark rounded-2xl shadow-2xl py-2 overflow-hidden flex flex-col z-50">
-                      {(['broken', 'inappropriate', 'spam'] as const).map((t) => (
-                         <button 
-                          key={t}
-                          onClick={() => submitReport(t)}
-                          className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider hover:bg-red-400/10 text-red-100 transition-colors"
-                         >
-                          Report {t}
-                         </button>
-                      ))}
+                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                      <span className="px-2.5 py-1 bg-brand-primary/10 text-brand-primary text-[9px] font-black uppercase tracking-widest rounded-lg border border-brand-primary/20 shrink-0">
+                        {image.category}
+                      </span>
+                      <h2 className="text-sm md:text-lg font-display font-black tracking-tight text-text-main uppercase italic truncate group-hover:text-brand-primary transition-colors">
+                        {image.title}
+                      </h2>
                     </div>
+                    <div className="flex items-center gap-1.5 text-brand-primary text-xs shrink-0 font-bold bg-brand-primary/10 px-3 py-1.5 rounded-xl border border-brand-primary/20">
+                      <UserCircle className="w-4 h-4" />
+                      <span className="text-[10px] uppercase tracking-wider">
+                        {isDetailsExpanded ? 'Hide Info' : 'Details'}
+                      </span>
+                      <ChevronRight className={cn("w-4 h-4 transition-transform duration-300", isDetailsExpanded && "rotate-90")} />
+                    </div>
+                  </button>
+
+                  {/* 2. Expandable Screen: Uploader Profile & Post Details */}
+                  <AnimatePresence>
+                    {isDetailsExpanded && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-3 overflow-hidden pt-1"
+                      >
+                        {/* Uploader Card */}
+                        <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/5 space-y-3">
+                          <p className="text-[9px] font-extrabold uppercase tracking-widest text-text-dim/60">Uploader Profile</p>
+                          <div className="flex items-center justify-between gap-3">
+                            <Link 
+                              to={`/profile/${image.userId || ''}`}
+                              onClick={onClose}
+                              className="flex items-center gap-3 min-w-0 hover:text-brand-primary transition-colors group/user"
+                            >
+                              <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/10 bg-bg-dark shrink-0 group-hover/user:border-brand-primary/50 transition-all">
+                                <img 
+                                  src={image.uploaderPhotoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${image.userId || image.id}`} 
+                                  referrerPolicy="no-referrer" 
+                                  alt="" 
+                                  className="w-full h-full object-cover" 
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-black text-text-main truncate uppercase group-hover/user:text-brand-primary">
+                                    {image.uploaderName || image.uploaderEmail?.split('@')[0] || 'Aether Resident'}
+                                  </p>
+                                  {isAdminUploader && <ShieldCheck className="w-4 h-4 text-brand-secondary shrink-0" />}
+                                </div>
+                                <p className="text-[9px] font-bold text-text-dim/50 uppercase tracking-widest mt-0.5">
+                                  Uploaded {formatDate(image.timestamp)}
+                                </p>
+                              </div>
+                            </Link>
+
+                            <Link
+                              to={`/profile/${image.userId || ''}`}
+                              onClick={onClose}
+                              className="px-3.5 py-1.5 bg-white/5 hover:bg-brand-primary hover:text-white border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-wider text-text-dim transition-all shrink-0"
+                            >
+                              View Profile
+                            </Link>
+                          </div>
+                        </div>
+
+                        {/* Post Details & Description */}
+                        <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/5 space-y-2">
+                          <p className="text-[9px] font-extrabold uppercase tracking-widest text-text-dim/60">Post Details</p>
+                          {image.description ? (
+                            <p className="text-text-dim/90 text-xs leading-relaxed font-medium">
+                              {image.description}
+                            </p>
+                          ) : (
+                            <p className="text-text-dim/40 text-xs italic">No additional description provided.</p>
+                          )}
+
+                          {image.tags && image.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-2 border-t border-white/5">
+                              {Array.from(new Set(image.tags)).filter(Boolean).map((tag: string, i: number) => (
+                                <span key={`exp-tag-${image.id}-${tag}-${i}`} className="px-2.5 py-1 bg-white/5 border border-white/5 rounded-lg text-[9px] font-bold text-text-dim uppercase tracking-wider">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* 3. Action Buttons Row: Like, Comment, Save, Share, Flag, Download */}
+                <div className="flex items-center justify-around gap-2 p-2 bg-white/[0.03] border border-white/5 rounded-2xl shadow-lg">
+                  {/* Like Button */}
+                  <button
+                    onClick={handleModalLike}
+                    className={cn(
+                      "flex-1 p-2.5 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center",
+                      hasLiked ? "bg-red-500 text-white shadow-lg shadow-red-500/20" : "bg-white/5 text-text-main hover:bg-white/10"
+                    )}
+                    title={hasLiked ? "Unlike post" : "Like post"}
+                    aria-label={hasLiked ? "Unlike post" : "Like post"}
+                  >
+                    <Heart className={cn("w-4.5 h-4.5", hasLiked && "fill-current")} />
+                  </button>
+
+                  {/* Comment Button */}
+                  <button
+                    onClick={() => setIsCommentsMinimized(prev => !prev)}
+                    className={cn(
+                      "flex-1 p-2.5 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center",
+                      !isCommentsMinimized ? "bg-brand-primary text-bg-dark font-black shadow-lg shadow-brand-primary/20" : "bg-white/5 text-text-main hover:bg-white/10"
+                    )}
+                    title="Toggle comments section"
+                    aria-label="Toggle comments"
+                  >
+                    <MessageSquare className="w-4.5 h-4.5" />
+                  </button>
+
+                  {/* Save Button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSave(image!); }}
+                    className={cn(
+                      "flex-1 p-2.5 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center",
+                      isSaved ? "bg-brand-primary/20 text-brand-primary border border-brand-primary/30 font-black" : "bg-white/5 text-text-main hover:bg-white/10"
+                    )}
+                    title={isSaved ? "Remove from saved" : "Save post"}
+                    aria-label={isSaved ? "Remove from saved" : "Save post"}
+                  >
+                    <BookmarkPlus className={cn("w-4.5 h-4.5", isSaved && "fill-current")} />
+                  </button>
+
+                  {/* Share Button */}
+                  <button
+                    onClick={handleShare}
+                    className="flex-1 p-2.5 bg-white/5 hover:bg-white/10 border border-white/5 text-text-main rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+                    title="Share post"
+                    aria-label="Share post"
+                  >
+                    <Share2 className="w-4.5 h-4.5" />
+                  </button>
+
+                  {/* Flag / Report Button */}
+                  <div className="relative flex-1">
+                    <button
+                      onClick={() => setReportTypeOpen(!reportTypeOpen)}
+                      className={cn(
+                        "w-full p-2.5 rounded-xl border transition-all active:scale-95 cursor-pointer flex items-center justify-center",
+                        reportTypeOpen ? "bg-red-500/10 border-red-500/50 text-red-500" : "bg-white/5 border-white/5 text-text-dim hover:text-red-400 hover:bg-red-500/10"
+                      )}
+                      title="Flag / Report"
+                      aria-label="Flag / Report"
+                    >
+                      <Flag className="w-4.5 h-4.5" />
+                    </button>
+                    {reportTypeOpen && (
+                      <div className="absolute bottom-full right-0 mb-2 w-36 bg-card-dark border border-border-dark rounded-2xl shadow-2xl py-1 overflow-hidden flex flex-col z-50">
+                        {(['broken', 'inappropriate', 'spam'] as const).map((t) => (
+                          <button 
+                            key={`report-type-${t}`}
+                            onClick={() => submitReport(t)}
+                            className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider hover:bg-red-400/10 text-red-200 transition-colors"
+                          >
+                            Report {t}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Download Button */}
+                  {!embedUrl && !isProtected && (
+                    <button
+                      onClick={handleDownload}
+                      disabled={isDownloading}
+                      className="flex-1 p-2.5 bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white border border-brand-primary/20 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+                      title="Download asset"
+                      aria-label="Download asset"
+                    >
+                      <Download className="w-4.5 h-4.5" />
+                    </button>
                   )}
                 </div>
 
-                {user?.isAdmin && (
+                {/* 4. Comments Section Inline */}
+                <AnimatePresence>
+                  {!isCommentsMinimized && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="p-4 md:p-6 bg-white/[0.02] border border-white/10 rounded-2xl space-y-4 overflow-hidden shadow-2xl"
+                    >
+                      <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                        <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-brand-primary">
+                          <MessageSquare className="w-4 h-4" /> Comments & Discussion
+                        </div>
+                        <button 
+                          onClick={() => setIsCommentsMinimized(true)}
+                          className="p-1 rounded-lg text-text-dim hover:text-white bg-white/5 hover:bg-white/10"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="max-h-[380px] overflow-y-auto no-scrollbar">
+                        <CommentSection imageId={image.id} user={user} imageTags={image.tags} />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Admin / Owner Delete Option */}
+                {(user?.isAdmin || (user && image.userId === user.uid)) && (
                   <button
                     onClick={handleDelete}
                     disabled={isDeleting}
-                    className="h-12 md:h-14 rounded-xl md:rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 hover:bg-red-500 hover:text-white transition-all active:scale-90 disabled:opacity-50"
+                    className="w-full py-3 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center gap-2 text-red-400 hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 text-xs font-bold uppercase tracking-wider cursor-pointer"
                   >
                     {isDeleting ? (
                       <div className="w-4 h-4 border-2 border-red-400/20 border-t-red-400 rounded-full animate-spin" />
                     ) : (
-                      <Trash2 className="w-5 h-5" />
+                      <>
+                        <Trash2 className="w-4 h-4" /> Delete Post
+                      </>
                     )}
                   </button>
                 )}
-              </div>
 
-              {/* Tags */}
-              {image.tags.length > 0 && (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-[0.2em] text-text-dim">
-                    <Tag className="w-3.5 h-3.5" /> Discovery Tags
+                {/* 5. Related Posts Grid */}
+                {relatedImages.length > 0 && (
+                  <div className="space-y-4 pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-text-dim">
+                        <Sparkles className="w-4 h-4 text-brand-primary" /> Related Sanctuary Assets
+                      </div>
+                      <span className="text-[10px] font-bold text-brand-primary">{relatedImages.length} items</span>
+                    </div>
+                    <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                      {relatedImages.map((img, i) => (
+                        <button
+                          key={`related-${image.id}-${img.id || i}-${i}`}
+                          onClick={() => onClickRelated(img)}
+                          className="relative aspect-square rounded-2xl overflow-hidden group/related ring-1 ring-white/10 hover:ring-brand-primary transition-all cursor-pointer shadow-lg"
+                        >
+                          <img 
+                            src={img.type === 'video' ? img.thumbnailUrl || img.url : img.url} 
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover transition-transform duration-500 group-hover/related:scale-110" 
+                            alt={img.title || "Related asset"}
+                          />
+                          {img.type === 'video' && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                              <Play className="w-4 h-4 text-white fill-current" />
+                            </div>
+                          )}
+                          {img.isPremium && (
+                            <div className="absolute top-1.5 right-1.5 bg-black/60 backdrop-blur-md p-1 rounded-md">
+                              <Sparkles className="w-3 h-3 text-amber-500" />
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {image.tags.map(tag => (
-                      <span
-                        key={tag}
-                        className="px-3 md:px-4 py-1.5 bg-white/5 border border-white/5 rounded-xl text-[10px] font-bold text-text-dim uppercase tracking-widest hover:text-white hover:border-white/20 transition-all cursor-pointer"
-                      >
-                        #{tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Comment Section */}
-              <div className="pt-2 md:pt-4 pb-10">
-                <CommentSection imageId={image.id} user={user} />
+                )}
               </div>
-            </div>
+            )}
+
           </motion.div>
-        </motion.div>
       </div>
+
+      {/* MODAL: Curator Profile Details - Enhanced "Small Screen" Feel */}
+      <AnimatePresence>
+        {showUploaderDetails && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowUploaderDetails(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-2xl"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-xs bg-card-dark rounded-3xl overflow-hidden border border-white/10 shadow-2xl z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="h-20 bg-gradient-to-br from-white/5 to-white/[0.02] relative border-b border-white/5">
+                <div className="absolute top-4 right-4">
+                  <button 
+                    onClick={() => setShowUploaderDetails(false)}
+                    className="p-1.5 rounded-full bg-white/5 text-white/40 hover:text-white transition-colors border border-white/10"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="px-6 pb-8 -mt-10 relative flex flex-col items-center text-center space-y-6">
+                <div className="w-20 h-20 rounded-2xl overflow-hidden border-4 border-card-dark shadow-xl bg-white/[0.02]">
+                  {image.uploaderPhotoURL ? (
+                    <img 
+                      src={image.uploaderPhotoURL} 
+                      alt={image.uploaderName} 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white/10">
+                      <UserCircle className="w-10 h-10" />
+                    </div>
+                  )}
+                </div>
+                
+                <div className="space-y-1 allow-select">
+                  <h2 className="text-xl font-display font-light text-white leading-none">{image.uploaderName}</h2>
+                  <p className="text-[8px] font-black uppercase tracking-[0.3em] text-brand-primary">
+                    {uploaderFullData?.isAdmin ? 'Architect' : 'Resident Curator'}
+                  </p>
+                </div>
+
+                <div className="w-full grid grid-cols-1 gap-2 allow-select">
+                    <div className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-xl">
+                        <Mail className="w-3 h-3 text-text-dim/40" />
+                        <span className="text-[10px] text-text-main/60 truncate">{image.uploaderEmail}</span>
+                    </div>
+
+                    {uploaderFullData?.location && (
+                        <div className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-xl">
+                            <MapPin className="w-3 h-3 text-text-dim/40" />
+                            <span className="text-[10px] text-text-main/60">{uploaderFullData.location}</span>
+                        </div>
+                    )}
+                </div>
+
+                {uploaderFullData?.bio && (
+                    <p className="text-[10px] text-text-dim/40 leading-relaxed italic px-2 allow-select">
+                        "{uploaderFullData.bio}"
+                    </p>
+                )}
+
+                <button 
+                  onClick={() => setShowUploaderDetails(false)}
+                  className="w-full py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[9px] font-black uppercase tracking-widest text-text-dim/30 hover:text-text-main transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {isCollectionsOpen && <CollectionModal imageId={image.id} user={user} onClose={() => setIsCollectionsOpen(false)} />}
     </AnimatePresence>
   );
