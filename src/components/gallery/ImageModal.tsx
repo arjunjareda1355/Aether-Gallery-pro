@@ -19,7 +19,7 @@ interface ImageModalProps {
   hasLiked: boolean;
   isSaved: boolean;
   user: User | null;
-  onNavigate?: (direction: 'next' | 'prev') => void;
+  onNavigate?: (direction: 'next' | 'prev', mediaTypeFilter?: 'all' | 'video') => void;
   hasNext?: boolean;
   hasPrev?: boolean;
   onSelectImage?: (image: Image) => void;
@@ -100,6 +100,7 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
   const [isMuted, setIsMuted] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastWheelNavRef = useRef<number>(0);
+  const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -178,6 +179,11 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
     setNaturalAspectRatio(null);
   }, [image?.id]);
 
+  const handleNavigateWithDirection = (dir: 'next' | 'prev', mediaTypeFilter: 'all' | 'video' = 'all') => {
+    setDirection(dir === 'next' ? 1 : -1);
+    onNavigate?.(dir, mediaTypeFilter);
+  };
+
   const handleWheelNavigation = (e: React.WheelEvent) => {
     if (e.ctrlKey || zoomLevel > 1) {
       e.preventDefault();
@@ -195,21 +201,25 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
       return;
     }
     
-    // Smooth wheel scroll for next/prev video or post
+    // Strictly ONLY horizontal wheel (trackpad horizontal swipe or Shift+Wheel or horizontal mouse tilt) navigates next/prev post
+    // Vertical scrolling (deltaY) NEVER changes the post so users can scroll through details and comments smoothly
     const now = Date.now();
     if (now - lastWheelNavRef.current > 350) {
-      if (e.deltaY > 20 && hasNext) {
-        lastWheelNavRef.current = now;
-        handleNavigateWithDirection('next');
-      } else if (e.deltaY < -20 && hasPrev) {
-        lastWheelNavRef.current = now;
-        handleNavigateWithDirection('prev');
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) {
+        if (e.deltaX > 20 && hasNext) {
+          lastWheelNavRef.current = now;
+          handleNavigateWithDirection('next', image?.type === 'video' ? 'video' : 'all');
+        } else if (e.deltaX < -20 && hasPrev) {
+          lastWheelNavRef.current = now;
+          handleNavigateWithDirection('prev', image?.type === 'video' ? 'video' : 'all');
+        }
       }
     }
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
+      touchStartXRef.current = e.touches[0].clientX;
       touchStartYRef.current = e.touches[0].clientY;
     }
   };
@@ -219,21 +229,32 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
       handleTouchZoom(e);
       return;
     }
-    if (touchStartYRef.current !== null && e.touches.length === 1 && zoomLevel <= 1) {
+    if (touchStartXRef.current !== null && touchStartYRef.current !== null && e.touches.length === 1 && zoomLevel <= 1) {
+      const deltaX = e.touches[0].clientX - touchStartXRef.current;
       const deltaY = e.touches[0].clientY - touchStartYRef.current;
-      if (Math.abs(deltaY) > 50) {
+      
+      // Strict horizontal swipe check: horizontal swipe must be distinctly horizontal and pass threshold
+      // Vertical touch movement is preserved for natural page and comment scrolling
+      if (Math.abs(deltaX) > Math.abs(deltaY) * 1.5 && Math.abs(deltaX) > 40) {
         const now = Date.now();
         if (now - lastWheelNavRef.current > 350) {
           lastWheelNavRef.current = now;
-          if (deltaY < 0 && hasNext) {
-            handleNavigateWithDirection('next');
-          } else if (deltaY > 0 && hasPrev) {
-            handleNavigateWithDirection('prev');
+          if (deltaX < 0 && hasNext) {
+            handleNavigateWithDirection('next', image?.type === 'video' ? 'video' : 'all');
+          } else if (deltaX > 0 && hasPrev) {
+            handleNavigateWithDirection('prev', image?.type === 'video' ? 'video' : 'all');
           }
         }
+        touchStartXRef.current = null;
         touchStartYRef.current = null;
       }
     }
+  };
+
+  const handleTouchEnd = () => {
+    lastTouchRef.current = 0;
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
   };
 
   useEffect(() => {
@@ -295,11 +316,6 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
       document.body.style.overflow = '';
     };
   }, [!!image]);
-
-  const handleNavigateWithDirection = (dir: 'next' | 'prev') => {
-    setDirection(dir === 'next' ? 1 : -1);
-    onNavigate?.(dir);
-  };
 
   useEffect(() => {
     const handleFsChange = () => {
@@ -501,10 +517,6 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
         triggerZoomBadge();
       }
     }
-  };
-
-  const handleTouchEnd = () => {
-    lastTouchRef.current = 0;
   };
 
   const getVideoEmbedUrl = (url: string) => {
@@ -816,30 +828,28 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
               </div>
             ) : null}
 
-            {/* Video Scroll for Next Video Floating Controls */}
+            {/* Minimized Video Navigation Controls - Streams only videos on scroll/click */}
             {image.type === 'video' && (
-              <div className="absolute right-3 md:right-5 top-1/2 -translate-y-1/2 z-[140] flex flex-col items-center gap-1.5 bg-black/80 backdrop-blur-2xl p-2 rounded-2xl border border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.8)]">
+              <div className="absolute right-3 md:right-5 top-1/2 -translate-y-1/2 z-[140] flex flex-col items-center gap-1 bg-black/70 hover:bg-black/85 backdrop-blur-2xl p-1.5 rounded-full border border-white/20 shadow-[0_8px_32px_rgba(0,0,0,0.7)] transition-all group/vidnav">
                 {hasPrev && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('prev'); }}
-                    className="p-2.5 bg-white/10 hover:bg-brand-primary text-white rounded-xl transition-all active:scale-90 flex items-center justify-center cursor-pointer"
-                    title="Previous Video (Scroll Up)"
+                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('prev', 'video'); }}
+                    className="w-7 h-7 bg-white/10 hover:bg-brand-primary hover:text-bg-dark text-white rounded-full transition-all active:scale-90 flex items-center justify-center cursor-pointer shadow-md"
+                    title="Previous Video"
                   >
-                    <ChevronLeft className="w-5 h-5 rotate-90" />
+                    <ChevronLeft className="w-4 h-4 rotate-90" />
                   </button>
                 )}
-                <div className="py-2 px-1 flex flex-col items-center select-none">
-                  <span className="text-[8px] font-black uppercase tracking-widest text-white/70 rotate-90 my-3 whitespace-nowrap">
-                    Scroll
-                  </span>
+                <div className="w-5 h-5 rounded-full flex items-center justify-center text-brand-primary select-none opacity-80 group-hover/vidnav:opacity-100 transition-opacity" title="Videos Stream">
+                  <Play className="w-2.5 h-2.5 fill-current ml-0.5" />
                 </div>
                 {hasNext && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('next'); }}
-                    className="p-2.5 bg-brand-primary hover:bg-brand-primary/80 text-white rounded-xl transition-all active:scale-90 animate-pulse flex items-center justify-center cursor-pointer"
-                    title="Next Video (Scroll Down)"
+                    onClick={(e) => { e.stopPropagation(); handleNavigateWithDirection('next', 'video'); }}
+                    className="w-7 h-7 bg-brand-primary/80 hover:bg-brand-primary text-bg-dark font-bold rounded-full transition-all active:scale-90 flex items-center justify-center cursor-pointer shadow-md"
+                    title="Next Video"
                   >
-                    <ChevronRight className="w-5 h-5 rotate-90" />
+                    <ChevronRight className="w-4 h-4 rotate-90" />
                   </button>
                 )}
               </div>
@@ -1180,19 +1190,21 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
                </div>
             )}
 
-            {/* Action Bar (Top Left) - Universal Floating Controls */}
-            <div className="absolute top-4 left-4 md:top-6 md:left-6 z-[140] flex items-center gap-3">
-              {/* Fullscreen Toggle / Immersive Mode */}
-              <button 
-                onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
-                className={cn(
-                  "p-3 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-text-main hover:text-brand-primary transition-all hover:bg-black/90 active:scale-90 shadow-2xl flex items-center justify-center cursor-pointer group/fs"
-                )}
-                title={isFullscreen ? "Exit Device Fullscreen (Esc / F)" : "View in Fullscreen of Device (F)"}
-              >
-                {isFullscreen ? <Minimize2 className="w-5 h-5 text-brand-primary group-hover/fs:scale-110 transition-transform" /> : <Maximize2 className="w-5 h-5 group-hover/fs:scale-110 transition-transform" />}
-              </button>
-            </div>
+            {/* Action Bar (Top Left) - Universal Floating Controls (Hidden in Fullscreen to prevent duplicate exit icons) */}
+            {!isFullscreen && (
+              <div className="absolute top-4 left-4 md:top-6 md:left-6 z-[140] flex items-center gap-3">
+                {/* Fullscreen Toggle / Immersive Mode */}
+                <button 
+                  onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+                  className={cn(
+                    "p-3 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-text-main hover:text-brand-primary transition-all hover:bg-black/90 active:scale-90 shadow-2xl flex items-center justify-center cursor-pointer group/fs"
+                  )}
+                  title="View in Fullscreen of Device (F)"
+                >
+                  <Maximize2 className="w-5 h-5 group-hover/fs:scale-110 transition-transform" />
+                </button>
+              </div>
+            )}
             </div>
             
             {!isFullscreen && (

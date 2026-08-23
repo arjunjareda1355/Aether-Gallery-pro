@@ -23,6 +23,7 @@ import CollectionModal from './components/gallery/CollectionModal';
 import Notification, { NotificationType } from './components/ui/Notification';
 import ThemeVisualizer from './components/layout/ThemeVisualizer';
 import AuthModal, { AuthMode } from './components/auth/AuthModal';
+import SelectionToolbar from './components/gallery/SelectionToolbar';
 
 const AboutPage = lazy(() => import('./pages/AboutPage'));
 const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
@@ -806,21 +807,22 @@ function AppContent() {
     setSearchParams({});
   };
 
-  const handleNavigate = (direction: 'next' | 'prev') => {
-    const currentList = filteredImages.length > 0 ? filteredImages : images;
+  const handleNavigate = (direction: 'next' | 'prev', mediaTypeFilter: 'all' | 'video' = 'all') => {
+    let currentList = filteredImages.length > 0 ? filteredImages : images;
+    if (mediaTypeFilter === 'video') {
+      const videoOnlyList = currentList.filter(i => i.type === 'video');
+      if (videoOnlyList.length > 0) {
+        currentList = videoOnlyList;
+      }
+    }
     if (currentList.length === 0) return;
 
-    let currentIndex = selectedImageIndex;
-    
-    // Safety: ensure we have a valid index
-    if (currentIndex === -1 && selectedImage) {
+    let currentIndex = -1;
+    if (selectedImage) {
       currentIndex = currentList.findIndex(i => i.id === selectedImage.id);
     }
 
-    // If still -1, the asset might be from related images or not in current view
     if (currentIndex === -1) {
-      // In this case, navigation is restricted to the current view.
-      // We pick the closest relative or first/last.
       if (direction === 'next') {
         const nextImage = currentList[0];
         if (nextImage) setSearchParams({ post: nextImage.id });
@@ -897,14 +899,72 @@ function AppContent() {
     if (!user?.isAdmin) return;
     setIsSelectMode(true);
     setSelectedPostIds(new Set([image.id]));
-    notify("Bulk Selection Mode Active. Tap any image or video to adjust selection.", "info");
+    notify("Selection Mode Active. Select items to manage in batch.", "info");
   }, [user, notify]);
+
+  const handleToggleSelectAll = useCallback(() => {
+    setSelectedPostIds(prev => {
+      if (prev.size === images.length) {
+        return new Set();
+      } else {
+        return new Set(images.map(img => img.id));
+      }
+    });
+  }, [images]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedPostIds(new Set());
+  }, []);
 
   const handleBulkExit = useCallback(() => {
     setIsSelectMode(false);
     setSelectedPostIds(new Set());
     setShowBulkMenu(false);
   }, []);
+
+  const handleBulkDownload = async () => {
+    const selectedList = images.filter(img => selectedPostIds.has(img.id));
+    if (selectedList.length === 0) return;
+    notify(`Downloading ${selectedList.length} asset(s)...`, "info");
+    for (const item of selectedList) {
+      try {
+        const resp = await fetch(item.url);
+        const blob = await resp.blob();
+        const ext = blob.type.split('/')[1] || (item.type === 'video' ? 'mp4' : 'jpg');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${item.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_Aether.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.warn("Direct download failed, opening link:", e);
+        window.open(item.url, '_blank');
+      }
+    }
+    notify(`Batch download initialized for ${selectedList.length} assets.`, "success");
+  };
+
+  const handleBulkAddTags = async (newTags: string[]) => {
+    if (selectedPostIds.size === 0 || newTags.length === 0) return;
+    try {
+      const batch = writeBatch(db);
+      selectedPostIds.forEach(id => {
+        const img = images.find(i => i.id === id);
+        const existingTags = img?.tags || [];
+        const mergedTags = Array.from(new Set([...existingTags, ...newTags]));
+        batch.update(doc(db, COLLECTIONS.IMAGES, id), { tags: mergedTags });
+      });
+      await batch.commit();
+      notify(`Updated tags for ${selectedPostIds.size} posts.`, "success");
+      handleBulkExit();
+    } catch (err) {
+      console.error("Bulk tag update failed:", err);
+      notify("Bulk tag update failed.", "error");
+    }
+  };
 
   const [bulkTitleInput, setBulkTitleInput] = useState('');
   const [bulkCategoryInput, setBulkCategoryInput] = useState('');
@@ -1409,217 +1469,27 @@ function AppContent() {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {isSelectMode && !selectedImage && (
-          <>
-            {/* Center floating selection status and Exit tracker */}
-            <motion.div
-              key="select-mode-bar"
-              initial={{ opacity: 0, y: 50, x: "-50%", scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, x: "-50%", scale: 1 }}
-              exit={{ opacity: 0, y: 50, x: "-50%", scale: 0.95 }}
-              className="fixed bottom-8 left-1/2 z-50 flex items-center gap-4 bg-bg-dark/95 backdrop-blur-xl border border-white/10 px-6 py-3 rounded-full shadow-[0_12px_40px_rgba(0,0,0,0.6)] select-none text-white whitespace-nowrap"
-            >
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-brand-primary animate-pulse" />
-                <span className="font-display font-medium tracking-wide uppercase text-[10px] text-white/90">
-                  Select Mode:
-                </span>
-                <span className="font-mono font-bold text-xs text-brand-primary">
-                  {selectedPostIds.size} post(s)
-                </span>
-              </div>
-              <div className="w-px h-4 bg-white/10" />
-              <button
-                onClick={handleBulkExit}
-                className="flex items-center gap-1.5 text-[10px] font-black tracking-widest uppercase text-red-400 hover:text-red-300 transition-colors bg-white/5 hover:bg-white/10 px-3.5 py-1.5 rounded-full cursor-pointer"
-                title="Cancel Selection Mode"
-              >
-                <X className="w-3.5 h-3.5" />
-                Cancel Selection Mode
-              </button>
-            </motion.div>
-
-            <motion.button
-              key="bulk-menu-toggle-btn"
-              initial={{ opacity: 0, scale: 0.5, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.5, y: 20 }}
-              onClick={() => setShowBulkMenu(!showBulkMenu)}
-              className={cn(
-                "fixed bottom-8 left-8 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-2xl transition-all border",
-                showBulkMenu 
-                  ? "bg-white text-bg-dark border-white hover:scale-110 active:scale-90" 
-                  : "bg-brand-primary text-bg-dark border-brand-primary/20 hover:scale-110 active:scale-95"
-              )}
-              title="Bulk Actions"
-            >
-              {showBulkMenu ? (
-                <X className="w-5 h-5 animate-in spin-in-12 duration-200" />
-              ) : (
-                <span className="font-serif italic text-lg leading-none select-none">?</span>
-              )}
-            </motion.button>
-
-            {showBulkMenu && (
-              <motion.div
-                key="bulk-menu-panel"
-                initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 20, scale: 0.95 }}
-                className="fixed bottom-24 left-8 z-50 w-[300px] sm:w-[350px] rounded-3xl bg-bg-dark/95 backdrop-blur-xl border border-white/10 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex flex-col gap-4 text-left text-white"
-              >
-                <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
-                  <div>
-                    <h3 className="font-display font-medium text-[11px] text-white/50 tracking-widest uppercase">AETHER BULK MANIFEST</h3>
-                    <p className="text-[10px] text-brand-primary font-mono tracking-wider mt-0.5">{selectedPostIds.size} manifestation(s) selected</p>
-                  </div>
-                  <button 
-                    onClick={() => setShowBulkMenu(false)}
-                    className="p-1 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {/* Section 1: Change Category */}
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/40 block">Transmute Category</label>
-                  <div className="flex gap-2">
-                    <select 
-                      value={bulkCategoryInput}
-                      onChange={(e) => setBulkCategoryInput(e.target.value)}
-                      className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-primary tracking-wide"
-                    >
-                      <option value="" disabled className="bg-bg-dark text-white/60">Select category...</option>
-                      {categories.map((cat, idx) => (
-                        <option key={`bulk-cat-option-${cat.id || idx}-${idx}`} value={cat.slug} className="bg-bg-dark text-white">
-                          {cat.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => handleBulkChangeCategory(bulkCategoryInput)}
-                      disabled={!bulkCategoryInput}
-                      className="px-3 py-1.5 bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-brand-primary hover:text-bg-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      APPLY
-                    </button>
-                  </div>
-                </div>
-
-                {/* Section 2: Visibility Toggle */}
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/40 block">Manifestation Access</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => handleBulkChangeVisibility(false)}
-                      className="flex items-center justify-center gap-1.5 px-3 py-2 bg-white/[0.03] border border-white/5 rounded-xl text-xs hover:bg-white/10 hover:border-white/20 transition-all font-semibold"
-                    >
-                      <Unlock className="w-3.5 h-3.5 text-green-400" />
-                      Make Public
-                    </button>
-                    <button
-                      onClick={() => handleBulkChangeVisibility(true)}
-                      className="flex items-center justify-center gap-1.5 px-3 py-2 bg-brand-primary/[0.04] border border-brand-primary/20 rounded-xl text-xs hover:bg-brand-primary/10 hover:border-brand-primary/30 text-brand-primary transition-all font-semibold"
-                    >
-                      <Lock className="w-3.5 h-3.5" />
-                      Make Premium
-                    </button>
-                  </div>
-                </div>
-
-                {/* Section 3: Change Title */}
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/40 block">Re-scribe Title</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text"
-                      value={bulkTitleInput}
-                      onChange={(e) => setBulkTitleInput(e.target.value)}
-                      placeholder="Enter new asset title..."
-                      className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-white/25 focus:outline-none focus:border-brand-primary"
-                    />
-                    <button
-                      onClick={() => handleBulkChangeTitle(bulkTitleInput)}
-                      disabled={!bulkTitleInput.trim()}
-                      className="px-3 py-1.5 bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-brand-primary hover:text-bg-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      APPLY
-                    </button>
-                  </div>
-                </div>
-
-                {/* Section Target URL (only if exactly 1 post is selected) */}
-                {selectedPostIds.size === 1 && (() => {
-                  const singleId = Array.from(selectedPostIds)[0] as string;
-                  const singlePost = images.find(img => img.id === singleId);
-                  if (!singlePost) return null;
-                  return (
-                    <div className="space-y-1.5 border-t border-white/5 pt-3">
-                      <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-primary block">Modify Asset Hosting Link</label>
-                      <div className="flex gap-2">
-                        <input 
-                          type="text"
-                          value={singlePostUrlInput}
-                          onChange={(e) => setSinglePostUrlInput(e.target.value)}
-                          placeholder="Enter new hosting/source URL..."
-                          className="flex-1 bg-white/[0.03] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-white/25 focus:outline-none focus:border-brand-primary"
-                        />
-                        <button
-                          onClick={() => handleUpdateSinglePostUrl(singleId, singlePostUrlInput)}
-                          disabled={!singlePostUrlInput.trim() || singlePostUrlInput === singlePost.url}
-                          className="px-3 py-1.5 bg-brand-primary/20 text-brand-primary border border-brand-primary/30 rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-brand-primary hover:text-bg-dark transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          UPDATE
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Section 4: Extra Powers: Share & Delete */}
-                <div className="border-t border-white/5 pt-3.5 flex flex-col gap-2">
-                  <button
-                    onClick={handleBulkShare}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs hover:text-white transition-all font-semibold text-white/80"
-                  >
-                    <Share2 className="w-3.5 h-3.5 text-blue-400" />
-                    {(() => {
-                      const selectedList = images.filter(img => selectedPostIds.has(img.id));
-                      if (selectedList.length === 0) return "Share Post";
-                      const types = Array.from(new Set(selectedList.map(img => img.type || 'image')));
-                      if (types.length === 1) {
-                        return `Share ${types[0]}`;
-                      }
-                      return "Share Post";
-                    })()}
-                  </button>
-
-                  <button
-                    onClick={handleBulkDelete}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/15 rounded-xl text-xs text-red-400 hover:text-red-300 transition-all font-semibold"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Expunge Manifestations
-                  </button>
-                </div>
-
-                <div className="border-t border-white/5 pt-2 flex items-center justify-between text-[9px] text-white/40">
-                  <button 
-                    onClick={handleBulkExit}
-                    className="hover:text-red-400 font-bold transition-all uppercase tracking-wider text-left cursor-pointer flex items-center gap-1"
-                  >
-                    <X className="w-3 h-3" />
-                    Cancel Selection Mode
-                  </button>
-                  <span className="font-mono">AETHER.OS</span>
-                </div>
-              </motion.div>
-            )}
-          </>
-        )}
-      </AnimatePresence>
+      {/* Redesigned Floating Selection Toolbar */}
+      {isSelectMode && !selectedImage && (
+        <SelectionToolbar
+          selectedPostIds={selectedPostIds}
+          totalVisiblePosts={filteredImages.length > 0 ? filteredImages.length : images.length}
+          allVisibleImages={filteredImages.length > 0 ? filteredImages : images}
+          categories={categories}
+          user={user}
+          onToggleSelectAll={handleToggleSelectAll}
+          onClearSelection={handleClearSelection}
+          onExitSelectMode={handleBulkExit}
+          onBulkChangeCategory={handleBulkChangeCategory}
+          onBulkChangeVisibility={handleBulkChangeVisibility}
+          onBulkChangeTitle={handleBulkChangeTitle}
+          onBulkAddTags={handleBulkAddTags}
+          onBulkUpdateUrl={handleUpdateSinglePostUrl}
+          onBulkDelete={handleBulkDelete}
+          onBulkDownload={handleBulkDownload}
+          onBulkShare={handleBulkShare}
+        />
+      )}
 
       <AnimatePresence>
         {showBackToTop && !selectedImage && (
