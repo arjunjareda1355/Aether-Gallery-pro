@@ -8,7 +8,8 @@ import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
   updateProfile,
-  sendEmailVerification
+  sendEmailVerification,
+  applyActionCode
 } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { 
@@ -67,6 +68,7 @@ export {
   sendPasswordResetEmail,
   updateProfile,
   sendEmailVerification,
+  applyActionCode,
   signInWithPopup,
   signOut
 };

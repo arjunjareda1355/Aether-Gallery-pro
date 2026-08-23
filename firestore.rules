@@ -110,7 +110,7 @@ service cloud.firestore {
     // User profiles
     match /users/{userId} {
       allow read: if true;
-      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow update: if isSignedIn() && (isAdmin() || request.auth.uid == userId);
       allow delete: if isSignedIn() && (isAdmin() || request.auth.uid == userId);
     }
@@ -135,7 +135,7 @@ service cloud.firestore {
     // Images Collection
     match /images/{imageId} {
       allow read: if true;
-      allow create: if isSignedIn() && isValidImage(incoming());
+      allow create: if isSignedIn() && (isAdmin() || isValidImage(incoming()));
       allow delete: if isAdmin() || (isSignedIn() && existing().get('userId', '') == request.auth.uid);
       allow update: if (isAdmin() || (isSignedIn() && isValidImage(incoming())));
     }

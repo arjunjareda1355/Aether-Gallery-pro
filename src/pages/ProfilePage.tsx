@@ -5,7 +5,9 @@ import { signOut } from 'firebase/auth';
 import { User, Collection, Image, Follow } from '../types';
 import MasonryGrid from '../components/gallery/MasonryGrid';
 import ImageModal from '../components/gallery/ImageModal';
-import { Folder, Bookmark, User as UserIcon, ArrowLeft, Shield, Sparkles, Heart, Globe, Lock, Edit3, MapPin, Link as LinkIcon, Calendar, Briefcase, UserCircle, Save, X, ShieldCheck, Clock, Mail, Plus, Palette, Trash2, Crown, Palette as Paintbrush, UserPlus, UserMinus, Users, Upload } from 'lucide-react';
+import EmailVerificationModal from '../components/auth/EmailVerificationModal';
+import { hapticLight, hapticSuccess, hapticSelection, hapticMedium } from '../utils/haptics';
+import { Folder, Bookmark, User as UserIcon, ArrowLeft, Shield, Sparkles, Heart, Globe, Lock, Edit3, MapPin, Link as LinkIcon, Calendar, Briefcase, UserCircle, Save, X, ShieldCheck, CheckCircle2, Clock, Mail, Plus, Palette, Trash2, Crown, Palette as Paintbrush, UserPlus, UserMinus, Users, Upload } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Link, useSearchParams, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -185,6 +187,7 @@ export default function ProfilePage({
   const [isDeletingProfileState, setIsDeletingProfileState] = useState(false);
 
   const [profileData, setProfileData] = useState<User | null>(null);
+  const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followerCount, setFollowerCount] = useState(0);
@@ -690,10 +693,21 @@ export default function ProfilePage({
     setIsDeletingProfileState(true);
     setDeleteStep(3);
     try {
-      // Delete user profile document
+      // Delete user profile document from Firestore
       await deleteDoc(doc(db, COLLECTIONS.USERS, targetId));
       
       if (isOwnProfile) {
+        // Attempt to delete auth credential if current user
+        try {
+          if (auth.currentUser && auth.currentUser.uid === targetId) {
+            await auth.currentUser.delete().catch((authErr) => {
+              console.warn("Auth user deletion skipped/requires recent reauth, signing out instead:", authErr?.message || authErr);
+            });
+          }
+        } catch (authException) {
+          console.warn("Auth delete note:", authException);
+        }
+
         await signOut(auth);
         window.location.href = '/';
       } else {
@@ -942,7 +956,28 @@ export default function ProfilePage({
                   </div>
                 )}
               </div>
-              <p className="text-[7.5px] sm:text-[8.5px] text-text-dim/40 font-bold uppercase tracking-wider select-all">{profileData.email}</p>
+              <div className="flex items-center flex-wrap gap-2 pt-0.5">
+                {Boolean(profileData.emailVerified || (isOwnProfile && authUser?.emailVerified)) ? (
+                  <div className="inline-flex items-center gap-1 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md font-mono text-[7.5px] sm:text-[8.5px] font-bold tracking-wider shadow-sm select-none">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400 fill-emerald-400/20 shrink-0" />
+                    <span>Verified</span>
+                  </div>
+                ) : isOwnProfile && profileData.email ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      hapticLight();
+                      setIsVerifyModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-bg-dark border border-brand-primary/30 hover:border-brand-primary px-2 py-0.5 rounded-md text-[7.5px] sm:text-[8.5px] font-black uppercase tracking-wider transition-all active:scale-95 shadow-sm cursor-pointer select-none"
+                    title="Verify this email with a secure verification link"
+                  >
+                    <ShieldCheck className="w-2.5 h-2.5 shrink-0" />
+                    <span>Verify</span>
+                  </button>
+                ) : null}
+                <p className="text-[7.5px] sm:text-[8.5px] text-text-dim/50 font-bold uppercase tracking-wider select-all font-mono">{profileData.email}</p>
+              </div>
             </div>
 
             {profileData.bio && (
@@ -1584,6 +1619,29 @@ export default function ProfilePage({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Email Link Verification Modal */}
+      <EmailVerificationModal
+        isOpen={isVerifyModalOpen}
+        onClose={() => setIsVerifyModalOpen(false)}
+        email={profileData?.email || authUser?.email || ''}
+        displayName={profileData?.displayName || authUser?.displayName}
+        onVerified={async () => {
+          const currentUid = targetId || authUser?.uid;
+          if (currentUid) {
+            try {
+              await updateDoc(doc(db, COLLECTIONS.USERS, currentUid), {
+                emailVerified: true,
+                emailVerifiedAt: serverTimestamp()
+              });
+            } catch (err) {
+              console.warn("Could not write emailVerified to Firestore user doc:", err);
+            }
+          }
+          setProfileData(prev => prev ? ({ ...prev, emailVerified: true }) : prev);
+          hapticSuccess();
+        }}
+      />
 
       <ImageModal 
         image={selectedImage} 

@@ -10,6 +10,7 @@ import CollectionModal from './CollectionModal';
 import { db, COLLECTIONS } from '../../lib/firebase';
 import { addDoc, collection, serverTimestamp, deleteDoc, doc, query, where, getDocs, limit, onSnapshot, orderBy } from 'firebase/firestore';
 import { trackActivity } from '../../lib/recommendation';
+import { hapticLight, hapticMedium, hapticSuccess, hapticSelection } from '../../utils/haptics';
 
 interface ImageModalProps {
   image: Image | null;
@@ -273,6 +274,7 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
   }, [showUploaderDetails, image?.userId]);
 
   const handleModalLike = (e: React.MouseEvent) => {
+    hapticSelection();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -293,6 +295,7 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
     const now = Date.now();
     if (now - lastTouchRef.current < 300) {
       // Double tap detected
+      hapticLight();
       const rect = mediaRef.current?.getBoundingClientRect();
       if (rect) {
         const x = rect.width / 2;

@@ -28,10 +28,17 @@ import {
   updateProfile,
   sendEmailVerification
 } from '../../lib/firebase';
+import { sendLoginSecurityAlert } from '../../utils/securityAlerts';
+import { 
+  dispatchVerificationLink, 
+  checkEmailVerifiedStatus, 
+  recordEmailVerifiedInFirestore 
+} from '../../services/emailVerificationService';
+import { hapticLight, hapticSuccess, hapticError, hapticMedium, hapticSparkle } from '../../utils/haptics';
 import { cn } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 
-export type AuthMode = 'login' | 'signup' | 'forgot';
+export type AuthMode = 'login' | 'signup' | 'forgot' | 'verify-prompt';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -63,6 +70,12 @@ export default function AuthModal({
   const [resetSent, setResetSent] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
+  // Email verification prompt state
+  const [verifyTargetEmail, setVerifyTargetEmail] = useState('');
+  const [isCheckingVerifyStatus, setIsCheckingVerifyStatus] = useState(false);
+  const [isVerifiedSuccess, setIsVerifiedSuccess] = useState(false);
+  const [verifyLinkDirect, setVerifyLinkDirect] = useState<string | null>(null);
+
   const emailInputRef = useRef<HTMLInputElement>(null);
 
   // Sync mode with prop change
@@ -72,11 +85,102 @@ export default function AuthModal({
       setError(null);
       setSuccessMessage(null);
       setResetSent(false);
+      setResendCooldown(0);
+      setIsVerifiedSuccess(false);
+      setVerifyLinkDirect(null);
       setTimeout(() => {
         emailInputRef.current?.focus();
       }, 150);
     }
   }, [isOpen, initialMode]);
+
+  // Cooldown countdown timer
+  useEffect(() => {
+    let timer: any;
+    if (resendCooldown > 0) {
+      timer = setInterval(() => {
+        setResendCooldown(prev => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+
+  // Auto-detect email verification when in verify-prompt mode
+  useEffect(() => {
+    if (mode !== 'verify-prompt' || isVerifiedSuccess || !verifyTargetEmail) return;
+
+    const checkStatus = async () => {
+      try {
+        const verified = await checkEmailVerifiedStatus(verifyTargetEmail);
+        if (verified) {
+          handleVerificationConfirmed();
+        }
+      } catch (err) {
+        // silent
+      }
+    };
+
+    const interval = setInterval(checkStatus, 3500);
+    const handleFocus = () => { checkStatus(); };
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [mode, isVerifiedSuccess, verifyTargetEmail]);
+
+  const handleVerificationConfirmed = () => {
+    setIsVerifiedSuccess(true);
+    hapticSuccess();
+    hapticSparkle();
+
+    if (auth.currentUser?.uid) {
+      recordEmailVerifiedInFirestore(auth.currentUser.uid);
+    }
+
+    setTimeout(() => {
+      onSuccess?.(`Welcome to Aether! Email verified successfully.`);
+      onClose();
+    }, 2000);
+  };
+
+  const handleManualCheckVerification = async () => {
+    if (isCheckingVerifyStatus || isVerifiedSuccess) return;
+    setIsCheckingVerifyStatus(true);
+    setError(null);
+    hapticMedium();
+
+    try {
+      const verified = await checkEmailVerifiedStatus(verifyTargetEmail);
+      if (verified) {
+        handleVerificationConfirmed();
+      } else {
+        hapticError();
+        setError('Verification pending. Please click the link sent to your email inbox.');
+      }
+    } catch (err) {
+      setError('Could not verify status. Please try again.');
+    } finally {
+      setIsCheckingVerifyStatus(false);
+    }
+  };
+
+  const handleResendSignupLink = async () => {
+    if (resendCooldown > 0) return;
+    try {
+      hapticLight();
+      setResendCooldown(60);
+      setError(null);
+      const res = await dispatchVerificationLink(verifyTargetEmail, displayName);
+      if (res.verificationLink) {
+        setVerifyLinkDirect(res.verificationLink);
+      }
+      setSuccessMessage('A fresh verification link has been dispatched to your email.');
+    } catch (err) {
+      setError('Failed to resend verification link.');
+    }
+  };
 
   // Handle escape key
   useEffect(() => {
@@ -166,12 +270,21 @@ export default function AuthModal({
     try {
       setLoading(true);
       setError(null);
+      hapticLight();
       googleProvider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      
+      // Auto-send login notification email with session metadata
+      if (result?.user?.email) {
+        sendLoginSecurityAlert(result.user.email, result.user.displayName);
+      }
+
+      hapticSuccess();
       onSuccess?.('Welcome to Aether Sanctum!');
       onClose();
     } catch (err: any) {
       if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-by-user') {
+        hapticError();
         setError(parseAuthError(err));
       }
     } finally {
@@ -189,11 +302,13 @@ export default function AuthModal({
 
     // Validation
     if (!cleanEmail) {
+      hapticError();
       setError('Please enter your email address.');
       return;
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(cleanEmail)) {
+      hapticError();
       setError('Please enter a valid email address.');
       return;
     }
@@ -201,11 +316,14 @@ export default function AuthModal({
     if (mode === 'forgot') {
       try {
         setLoading(true);
+        hapticMedium();
         await sendPasswordResetEmail(auth, cleanEmail);
         setResetSent(true);
         setResendCooldown(60);
+        hapticSuccess();
         setSuccessMessage(`Password reset link sent to ${cleanEmail}. Please check your inbox and spam folder.`);
       } catch (err: any) {
+        hapticError();
         setError(parseAuthError(err));
       } finally {
         setLoading(false);
@@ -214,22 +332,26 @@ export default function AuthModal({
     }
 
     if (!password) {
+      hapticError();
       setError('Please enter your password.');
       return;
     }
 
     if (mode === 'signup') {
       if (password.length < 6) {
+        hapticError();
         setError('Password must be at least 6 characters long.');
         return;
       }
       if (password !== confirmPassword) {
+        hapticError();
         setError('Passwords do not match. Please verify.');
         return;
       }
 
       try {
         setLoading(true);
+        hapticMedium();
         const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         
         // Update user profile display name if provided
@@ -243,18 +365,21 @@ export default function AuthModal({
           }
         }
 
-        // Optional: send verification email
-        try {
-          if (cred.user) {
-            await sendEmailVerification(cred.user);
-          }
-        } catch (vErr) {
-          console.log('Email verification dispatch info:', vErr);
+        // Auto-send login notification alert for the new session
+        sendLoginSecurityAlert(cleanEmail, displayName.trim() || cred.user.displayName);
+
+        // Dispatch email verification link immediately upon account creation
+        const linkResult = await dispatchVerificationLink(cleanEmail, displayName.trim() || cred.user.displayName);
+        if (linkResult.verificationLink) {
+          setVerifyLinkDirect(linkResult.verificationLink);
         }
 
-        onSuccess?.(`Welcome to Aether, ${displayName.trim() || 'Creator'}! Your account has been created.`);
-        onClose();
+        setVerifyTargetEmail(cleanEmail);
+        setResendCooldown(60);
+        setMode('verify-prompt');
+        hapticSuccess();
       } catch (err: any) {
+        hapticError();
         setError(parseAuthError(err));
       } finally {
         setLoading(false);
@@ -263,10 +388,17 @@ export default function AuthModal({
       // Login mode
       try {
         setLoading(true);
-        await signInWithEmailAndPassword(auth, cleanEmail, password);
+        hapticMedium();
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        
+        // Auto-send login notification email with security info
+        sendLoginSecurityAlert(cleanEmail, cred.user.displayName);
+
+        hapticSuccess();
         onSuccess?.('Welcome back!');
         onClose();
       } catch (err: any) {
+        hapticError();
         setError(parseAuthError(err));
       } finally {
         setLoading(false);
@@ -332,8 +464,8 @@ export default function AuthModal({
               </p>
             </div>
 
-            {/* Mode Switcher Tabs (Only when not in forgot mode) */}
-            {mode !== 'forgot' && (
+            {/* Mode Switcher Tabs (Only when not in forgot or verify-prompt mode) */}
+            {mode !== 'forgot' && mode !== 'verify-prompt' && (
               <div className="grid grid-cols-2 p-1 bg-white/[0.04] border border-white/[0.06] rounded-2xl mb-6">
                 <button
                   type="button"
@@ -368,8 +500,110 @@ export default function AuthModal({
               </div>
             )}
 
+            {/* Email Verification Prompt View when Account is created */}
+            {mode === 'verify-prompt' ? (
+              <div className="space-y-5 text-center my-2">
+                <div className="relative mx-auto w-14 h-14 rounded-2xl flex items-center justify-center border transition-all duration-300 bg-brand-primary/10 border-brand-primary/30 text-brand-primary shadow-[0_0_25px_rgba(var(--brand-primary-rgb),0.2)]">
+                  {isVerifiedSuccess ? (
+                    <CheckCircle2 className="w-7 h-7 text-emerald-400 stroke-[2.5] animate-in zoom-in duration-300" />
+                  ) : (
+                    <Mail className="w-7 h-7 animate-pulse" />
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="text-lg font-display font-black uppercase tracking-tight text-text-main">
+                    {isVerifiedSuccess ? 'Identity Verified' : 'Verify Your Email'}
+                  </h3>
+                  <p className="text-xs text-text-dim leading-relaxed max-w-sm mx-auto">
+                    {isVerifiedSuccess 
+                      ? 'Your email address has been verified. Welcome to Aether Sanctuary!'
+                      : 'We sent a verification link to your email. Click the link to authenticate your account.'}
+                  </p>
+                </div>
+
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.04] border border-white/10 text-xs font-mono text-text-main font-semibold max-w-full truncate select-all">
+                  <Mail className="w-3.5 h-3.5 text-brand-primary shrink-0" />
+                  <span className="truncate">{verifyTargetEmail}</span>
+                </div>
+
+                {error && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -5 }} 
+                    animate={{ opacity: 1, y: 0 }} 
+                    className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2 text-left"
+                  >
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span className="leading-snug">{error}</span>
+                  </motion.div>
+                )}
+
+                {successMessage && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -5 }} 
+                    animate={{ opacity: 1, y: 0 }} 
+                    className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-start gap-2 text-left"
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span className="leading-snug">{successMessage}</span>
+                  </motion.div>
+                )}
+
+                {!isVerifiedSuccess ? (
+                  <div className="space-y-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleManualCheckVerification}
+                      disabled={isCheckingVerifyStatus}
+                      className="w-full py-3.5 bg-brand-primary text-bg-dark rounded-2xl text-xs font-black uppercase tracking-widest hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(var(--brand-primary-rgb),0.25)] disabled:opacity-50"
+                    >
+                      {isCheckingVerifyStatus ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Checking Status...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="w-4 h-4" />
+                          <span>I've Clicked the Link / Check Status</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleResendSignupLink}
+                        disabled={resendCooldown > 0}
+                        className="flex-1 py-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 text-[10px] font-black uppercase tracking-wider text-text-dim hover:text-white transition-all disabled:opacity-40"
+                      >
+                        {resendCooldown > 0 ? `Resend link in ${resendCooldown}s` : 'Resend Link'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          hapticLight();
+                          onSuccess?.(`Welcome to Aether, ${displayName.trim() || 'Creator'}!`);
+                          onClose();
+                        }}
+                        className="flex-1 py-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 text-[10px] font-black uppercase tracking-wider text-text-dim hover:text-white transition-all"
+                      >
+                        Enter Sanctuary
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-xs font-bold text-emerald-400 flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Email Verified Successfully</span>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
             {/* Google One-Click Button */}
-            {mode !== 'forgot' && (
+            {mode !== 'forgot' && mode !== 'verify-prompt' && (
               <div className="space-y-4 mb-6">
                 <button
                   type="button"
@@ -432,8 +666,9 @@ export default function AuthModal({
               </motion.div>
             )}
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Form (Only in login, signup, forgot modes) */}
+            {mode !== 'verify-prompt' && (
+              <form onSubmit={handleSubmit} className="space-y-4">
               {/* Display Name (Only in Signup mode) */}
               {mode === 'signup' && (
                 <div>
@@ -602,6 +837,7 @@ export default function AuthModal({
                 )}
               </button>
             </form>
+            )}
 
             {/* Back to Login link when in Forgot Password mode */}
             {mode === 'forgot' && (

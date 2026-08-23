@@ -32,6 +32,12 @@ const ModerationPage = lazy(() => import('./pages/ModerationPage'));
 const UpgradePage = lazy(() => import('./pages/UpgradePage'));
 
 import { trackActivity, getUserInterests } from './lib/recommendation';
+import { 
+  verifyLinkToken, 
+  handleFirebaseActionCode, 
+  recordEmailVerifiedInFirestore 
+} from './services/emailVerificationService';
+import { hapticSuccess } from './utils/haptics';
 
 export default function App() {
   return (
@@ -84,6 +90,61 @@ function AppContent() {
   const notify = useCallback((message: string, type: NotificationType = 'info') => {
     setNotification({ message, type });
   }, []);
+
+  // Global listener for URL-based email verification links (verify_token or Firebase oobCode)
+  useEffect(() => {
+    const verifyToken = searchParams.get('verify_token') || searchParams.get('verifyToken');
+    const emailParam = searchParams.get('email');
+    const oobCode = searchParams.get('oobCode');
+    const modeParam = searchParams.get('mode');
+
+    if (verifyToken) {
+      (async () => {
+        try {
+          const res = await verifyLinkToken(verifyToken, emailParam || undefined);
+          if (res.verified) {
+            hapticSuccess();
+            notify('Email identity successfully verified! Welcome to Aether Sanctuary.', 'success');
+            if (auth.currentUser?.uid) {
+              await recordEmailVerifiedInFirestore(auth.currentUser.uid);
+            }
+            if (user) {
+              setUser(prev => prev ? ({ ...prev, emailVerified: true }) : prev);
+            }
+          } else if (res.error) {
+            notify(res.error, 'error');
+          }
+        } catch (e) {
+          console.error('Error handling link verification token:', e);
+        } finally {
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.delete('verify_token');
+          nextParams.delete('verifyToken');
+          setSearchParams(nextParams, { replace: true });
+        }
+      })();
+    } else if (oobCode && modeParam === 'verifyEmail') {
+      (async () => {
+        try {
+          const ok = await handleFirebaseActionCode(oobCode);
+          if (ok) {
+            hapticSuccess();
+            notify('Email identity successfully verified via Firebase Auth.', 'success');
+            if (user) {
+              setUser(prev => prev ? ({ ...prev, emailVerified: true }) : prev);
+            }
+          }
+        } catch (e) {
+          console.error('Error handling oobCode:', e);
+        } finally {
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.delete('oobCode');
+          nextParams.delete('mode');
+          setSearchParams(nextParams, { replace: true });
+        }
+      })();
+    }
+  }, [searchParams, setSearchParams, notify, user]);
 
   useEffect(() => {
     // We no longer show onboarding automatically on app start for everyone.
@@ -245,7 +306,8 @@ function AppContent() {
             occupation: profileData?.occupation || null,
             theme: profileData?.theme || 'orange',
             isBanned: profileData?.isBanned || false,
-            isHold: profileData?.isHold || false
+            isHold: profileData?.isHold || false,
+            emailVerified: profileData?.emailVerified || firebaseUser.emailVerified || false
           });
         }, (error) => {
           console.error("Profile fetch failed:", error);

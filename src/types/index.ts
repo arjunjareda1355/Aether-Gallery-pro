@@ -55,6 +55,8 @@ export interface User {
   followingCountOverride?: number;
   fakeFollowers?: Array<{ uid: string; displayName: string; photoURL: string; email?: string; bio?: string; location?: string; isFake?: boolean }>;
   fakeFollowing?: Array<{ uid: string; displayName: string; photoURL: string; email?: string; bio?: string; location?: string; isFake?: boolean }>;
+  emailVerified?: boolean;
+  emailVerifiedAt?: any;
 }
 
 export interface UserProfile extends User {

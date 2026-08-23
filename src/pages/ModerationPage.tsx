@@ -521,6 +521,28 @@ export default function ModerationPage() {
     }
   };
 
+  const handleDeleteUserAccount = async (userToDelete: any) => {
+    if (!userToDelete) return;
+    const targetUserId = userToDelete.id || userToDelete.uid || userToDelete.userId;
+    const confirmName = userToDelete.displayName || userToDelete.email || 'this resident';
+    if (!window.confirm(`Are you sure you want to permanently dissolve the profile for ${confirmName}? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      await deleteDoc(doc(db, COLLECTIONS.USERS, targetUserId));
+      alert(`Resident profile for ${confirmName} has been permanently dissolved from the sanctuary archives.`);
+      setSelectedUser(null);
+      setEditUserEmail('');
+    } catch (e: any) {
+      console.error("Failed to delete user profile:", e);
+      alert("Aether Protocol: User profile dissolution failed: " + e.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSaveBranding = async () => {
     try {
       setSavingBranding(true);
@@ -1047,14 +1069,27 @@ export default function ModerationPage() {
                     </div>
                   </div>
 
-                  <div className="flex gap-3 pt-4 border-t border-white/5">
+                  <div className="flex flex-wrap sm:flex-nowrap gap-3 pt-4 border-t border-white/5">
                     <button 
+                      type="button"
                       onClick={() => { setSelectedUser(null); setEditUserEmail(''); }}
                       className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all text-text-dim hover:text-white"
                     >
                       Cancel
                     </button>
+                    {!selectedUser.isPregrant && (
+                      <button 
+                        type="button"
+                        onClick={() => handleDeleteUserAccount(selectedUser)}
+                        className="px-4 py-3.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5"
+                        title="Permanently dissolve this resident profile"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Dissolve</span>
+                      </button>
+                    )}
                     <button 
+                      type="button"
                       onClick={() => handleSaveUserPermissions(selectedUser)}
                       className="flex-[2] py-3.5 bg-brand-primary text-bg-dark rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-[1.01] active:scale-[0.98] transition-all flex items-center justify-center gap-2 font-bold"
                     >
