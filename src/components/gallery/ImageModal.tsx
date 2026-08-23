@@ -23,6 +23,7 @@ interface ImageModalProps {
   hasNext?: boolean;
   hasPrev?: boolean;
   onSelectImage?: (image: Image) => void;
+  onLogin?: () => void;
 }
 
 const HeartBubble = ({ id, x, y, onComplete }: { id: string, x: number, y: number, onComplete: () => void, key?: React.Key }) => {
@@ -62,7 +63,7 @@ const HeartBubble = ({ id, x, y, onComplete }: { id: string, x: number, y: numbe
   );
 };
 
-export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, isSaved, user, onNavigate, hasNext, hasPrev, onSelectImage }: ImageModalProps) {
+export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, isSaved, user, onNavigate, hasNext, hasPrev, onSelectImage, onLogin }: ImageModalProps) {
   const { t } = useTranslation();
   useBodyScrollLock(!!image);
   const slideVariants = {
@@ -256,11 +257,11 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
     const y = e.clientY - rect.top;
     
     // Add small bubble at click point
-    const newBubbles = [{ id: `mod-bubble-${Math.random().toString(36).substring(2, 9)}-${Date.now()}`, x, y }];
+    const newBubbles = [{ id: `mod-bubble-${Date.now()}-${Math.random().toString(36).substring(2, 9)}-1`, x, y }];
     
     // Add big center pop if Liking (not unliking)
     if (!hasLiked) {
-      newBubbles.push({ id: `center-pop-${Math.random().toString(36).substring(2, 9)}-${Date.now()}`, x: rect.width / 2, y: rect.height / 2 });
+      newBubbles.push({ id: `center-pop-${Date.now()}-${Math.random().toString(36).substring(2, 9)}-2`, x: rect.width / 2, y: rect.height / 2 });
     }
     
     setBubbles(prev => [...prev, ...newBubbles]);
@@ -275,7 +276,7 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
       if (rect) {
         const x = rect.width / 2;
         const y = rect.height / 2;
-        setBubbles(prev => [...prev, { id: `tap-bubble-${Math.random().toString(36).substring(2, 9)}-${Date.now()}`, x, y }]);
+        setBubbles(prev => [...prev, { id: `tap-bubble-${now}-${Math.random().toString(36).substring(2, 9)}`, x, y }]);
         if (!hasLiked) {
            onLike(e as any, image!);
         }
@@ -1410,7 +1411,7 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
                         </button>
                       </div>
                       <div className="max-h-[380px] overflow-y-auto no-scrollbar">
-                        <CommentSection imageId={image.id} user={user} imageTags={image.tags} />
+                        <CommentSection imageId={image.id} user={user} imageTags={image.tags} onLogin={onLogin} />
                       </div>
                     </motion.div>
                   )}

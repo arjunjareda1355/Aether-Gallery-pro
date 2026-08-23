@@ -9,7 +9,8 @@ import { cn, copyToClipboard } from '../lib/utils';
 import { handleFirestoreError } from '../lib/firebase';
 
 interface UpgradePageProps {
-  user: User;
+  user: User | null;
+  onLogin?: () => void;
 }
 
 const PLANS = [
@@ -18,7 +19,7 @@ const PLANS = [
   { id: '499', name: 'Divine Aether', price: '499', period: 'month', features: ['All Elite Features', 'Beta Feature Access', 'Early Content Drops', 'Developer Direct Line'] }
 ];
 
-export default function UpgradePage({ user }: UpgradePageProps) {
+export default function UpgradePage({ user, onLogin }: UpgradePageProps) {
   const [selectedPlan, setSelectedPlan] = useState<typeof PLANS[0] | null>(null);
   const [screenshotUrl, setScreenshotUrl] = useState('');
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -37,6 +38,10 @@ export default function UpgradePage({ user }: UpgradePageProps) {
   const [uploadTask, setUploadTask] = useState<any>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!user) {
+      onLogin?.();
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -83,6 +88,10 @@ export default function UpgradePage({ user }: UpgradePageProps) {
 
   const handleCustomRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      onLogin?.();
+      return;
+    }
     if (!requestData.fullName.trim() || !requestData.details.trim()) {
       alert("Please provide your identity and architectural details.");
       return;
@@ -115,6 +124,10 @@ export default function UpgradePage({ user }: UpgradePageProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      onLogin?.();
+      return;
+    }
     if (!selectedPlan || !screenshotUrl) return;
 
     setIsSubmitting(true);
@@ -149,7 +162,7 @@ export default function UpgradePage({ user }: UpgradePageProps) {
     }
   };
 
-  if (user.isPremium) {
+  if (user?.isPremium) {
     return (
       <div className="pt-32 px-4 text-center space-y-6">
         <div className="w-20 h-20 bg-green-500/10 text-green-500 rounded-full flex items-center justify-center mx-auto">
@@ -261,7 +274,7 @@ export default function UpgradePage({ user }: UpgradePageProps) {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
         {PLANS.map((plan, idx) => (
           <div 
-            key={plan.id}
+            key={`plan-card-${plan.id}-${idx}`}
             className={cn(
               "bg-card-dark/40 backdrop-blur-3xl border p-8 md:p-10 rounded-[40px] flex flex-col hover:scale-[1.02] transition-all group relative overflow-hidden shadow-2xl",
               idx === 1 ? "border-brand-primary/30 ring-1 ring-brand-primary/10 scale-105" : "border-white/5",

@@ -17,6 +17,7 @@ interface ProfilePageProps {
   onSave: (e: React.MouseEvent, image: Image) => void;
   likedImageIds: Set<string>;
   savedImageIds: Set<string>;
+  onLogin?: () => void;
 }
 
 type TabType = 'collections' | 'likes' | 'uploads';
@@ -148,7 +149,8 @@ export default function ProfilePage({
   onLike, 
   onSave, 
   likedImageIds, 
-  savedImageIds 
+  savedImageIds,
+  onLogin
 }: ProfilePageProps) {
   const { profileId } = useParams();
   const targetId = profileId || authUser?.uid;
@@ -778,6 +780,34 @@ export default function ProfilePage({
   }
 
   if (!profileData) {
+    if (!targetId && !authUser) {
+      return (
+        <div className="pt-36 px-4 flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-6">
+          <div className="w-16 h-16 rounded-3xl bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center text-brand-primary">
+            <UserCircle className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-display font-black tracking-tight text-text-main">Access Your Registry</h2>
+            <p className="text-xs text-text-dim leading-relaxed font-medium">
+              Sign in or create an account to view your saved collections, liked vision assets, and uploaded creations.
+            </p>
+          </div>
+          {onLogin && (
+            <button
+              type="button"
+              onClick={onLogin}
+              className="px-8 py-3.5 bg-gradient-to-r from-brand-primary to-brand-secondary text-white font-bold rounded-2xl text-xs uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-primary/20"
+            >
+              Sign In / Create Account
+            </button>
+          )}
+          <Link to="/" className="text-[10px] font-bold uppercase tracking-widest text-text-dim hover:text-text-main">
+            ← Explore Sanctuary Gallery
+          </Link>
+        </div>
+      );
+    }
+
     return (
       <div className="pt-40 flex flex-col items-center justify-center space-y-6">
          <X className="w-12 h-12 text-red-500/40" />

@@ -1,5 +1,15 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
+  sendEmailVerification
+} from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { 
   getFirestore, 
@@ -50,6 +60,16 @@ export async function testFirestoreConnection() {
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
+
+export {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
+  sendEmailVerification,
+  signInWithPopup,
+  signOut
+};
 
 export const COLLECTIONS = {
   IMAGES: 'images',

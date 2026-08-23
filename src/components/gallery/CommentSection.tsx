@@ -21,9 +21,10 @@ interface CommentSectionProps {
   imageId: string;
   user: UserType | null;
   imageTags?: string[];
+  onLogin?: () => void;
 }
 
-export default function CommentSection({ imageId, user, imageTags = [] }: CommentSectionProps) {
+export default function CommentSection({ imageId, user, imageTags = [], onLogin }: CommentSectionProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -114,8 +115,17 @@ export default function CommentSection({ imageId, user, imageTags = [] }: Commen
             </button>
           </form>
         ) : (
-          <div className="bg-black/20 rounded-2xl p-4 text-center border border-dashed border-white/10">
-            <p className="text-sm text-text-dim">Sign in to join the conversation.</p>
+          <div className="bg-white/[0.02] rounded-2xl p-4 text-center border border-white/10 flex flex-col items-center gap-2.5">
+            <p className="text-xs text-text-dim font-medium">Sign in or create an account to join the conversation.</p>
+            {onLogin && (
+              <button
+                type="button"
+                onClick={onLogin}
+                className="px-4 py-2 bg-text-main text-bg-dark rounded-xl text-[11px] font-bold uppercase tracking-wider hover:scale-105 active:scale-95 transition-all shadow-md"
+              >
+                Sign In / Sign Up
+              </button>
+            )}
           </div>
         )}
       </div>

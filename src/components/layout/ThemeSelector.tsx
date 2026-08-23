@@ -73,13 +73,13 @@ export default function ThemeSelector({ isOpen, onClose, currentTheme, onThemeSe
             </div>
 
             <div className="grid grid-cols-3 md:grid-cols-4 gap-2 md:gap-3 max-h-[40vh] md:max-h-[50vh] overflow-y-auto pr-2 no-scrollbar">
-              {filteredThemes.map((theme) => {
+              {filteredThemes.map((theme, idx) => {
                 const Icon = theme.icon;
                 const isSelected = currentTheme === theme.id;
                 
                 return (
                   <button
-                    key={theme.id}
+                    key={`theme-select-${theme.id}-${idx}`}
                     onClick={() => {
                       onThemeSelect(theme.id);
                       onClose();

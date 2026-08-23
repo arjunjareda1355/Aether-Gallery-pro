@@ -7,7 +7,7 @@ import { useInView } from 'react-intersection-observer';
 import { auth, db, googleProvider, COLLECTIONS, testFirestoreConnection, handleFirestoreError } from './lib/firebase';
 import { Image, Category, User } from './types';
 import { cn, debounce, copyToClipboard } from './lib/utils';
-import { ArrowLeft, Trash2, Sparkles, Wand2, Search, Check, Folder, Lock, Unlock, Edit3, HelpCircle, X, Download, Share2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Trash2, Sparkles, Wand2, Search, Check, Folder, Lock, Unlock, Edit3, HelpCircle, X, Download, Share2, AlertTriangle, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Components
@@ -22,6 +22,7 @@ import CategoryManager from './components/admin/CategoryManager';
 import CollectionModal from './components/gallery/CollectionModal';
 import Notification, { NotificationType } from './components/ui/Notification';
 import ThemeVisualizer from './components/layout/ThemeVisualizer';
+import AuthModal, { AuthMode } from './components/auth/AuthModal';
 
 const AboutPage = lazy(() => import('./pages/AboutPage'));
 const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
@@ -64,6 +65,15 @@ function AppContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [notification, setNotification] = useState<{ message: string, type: NotificationType } | null>(null);
+
+  // Authentication Modal State
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<AuthMode>('login');
+
+  const openAuthModal = useCallback((mode: AuthMode = 'login') => {
+    setAuthModalMode(mode);
+    setAuthModalOpen(true);
+  }, []);
 
   // Owner Bulk Select States
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -716,26 +726,9 @@ function AppContent() {
     }
   }, [inView, hasMore, isLoading, isFetchingMore]);
 
-  const handleLogin = async () => {
-    try {
-      googleProvider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      console.error("Login failed", error);
-      
-      // Silence user-initiated closures to avoid annoying alerts
-      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-by-user') {
-        console.log("Aether Protocol: Login sequence interrupted by user.");
-        return;
-      }
-
-      if (error.code === 'auth/popup-blocked') {
-        alert("Aether Protocol: The link transmission was blocked by your browser's firewall (Popup Blocker). Please allow popups or open the Sanctum in a new tab.");
-      } else {
-        alert(`Aether Protocol: Authentication failed. ${error.message}`);
-      }
-    }
-  };
+  const handleLogin = useCallback(() => {
+    openAuthModal('login');
+  }, [openAuthModal]);
 
   const handleLogout = () => {
     signOut(auth);
@@ -857,7 +850,8 @@ function AppContent() {
   const handleSave = async (e: MouseEvent | null, image: Image) => {
     if (e) e.stopPropagation();
     if (!user) {
-      alert("Please sign in to save assets to your collections.");
+      notify("Please sign in to save assets to your collections.", "info");
+      openAuthModal('login');
       return;
     }
 
@@ -1095,7 +1089,8 @@ function AppContent() {
   const handleLike = async (e: MouseEvent, image: Image) => {
     e.stopPropagation();
     if (!user) {
-      alert("Please sign in to like this sanctuary's assets.");
+      notify("Please sign in to like this sanctuary asset.", "info");
+      openAuthModal('login');
       return;
     }
 
@@ -1721,6 +1716,7 @@ function AppContent() {
                       hasNext={filteredImages.length > 1}
                       hasPrev={filteredImages.length > 1}
                       onSelectImage={handleImageClick}
+                      onLogin={handleLogin}
                     />
                   </>
                 ) : (
@@ -1761,6 +1757,7 @@ function AppContent() {
                 onSave={handleSave} 
                 likedImageIds={likedImageIds}
                 savedImageIds={savedImageIds}
+                onLogin={handleLogin}
               />
             </motion.div>
           } />
@@ -1800,13 +1797,35 @@ function AppContent() {
                     />
                   </div>
                 </div>
-              ) : <Navigate to="/" replace />}
+              ) : (
+                <div className="pt-36 px-4 flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-6">
+                  <div className="w-16 h-16 rounded-3xl bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center text-brand-primary">
+                    <Upload className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-display font-black tracking-tight text-text-main">Manifest In Sanctuary</h2>
+                    <p className="text-xs text-text-dim leading-relaxed font-medium">
+                      Sign in or create your account to upload and publish images or videos to the Aether collection.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLogin}
+                    className="px-8 py-3.5 bg-gradient-to-r from-brand-primary to-brand-secondary text-white font-bold rounded-2xl text-xs uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-brand-primary/20"
+                  >
+                    Sign In / Create Account
+                  </button>
+                  <RouterLink to="/" className="text-[10px] font-bold uppercase tracking-widest text-text-dim hover:text-text-main">
+                    ← Explore Sanctuary Gallery
+                  </RouterLink>
+                </div>
+              )}
             </motion.div>
           } />
 
           <Route path="/upgrade" element={
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {user ? <UpgradePage user={user} /> : <Navigate to="/" replace />}
+              <UpgradePage user={user} onLogin={handleLogin} />
             </motion.div>
           } />
 
@@ -1948,6 +1967,15 @@ function AppContent() {
             onClose={() => setSavingImage(null)} 
           />
         )}
+
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          initialMode={authModalMode}
+          onSuccess={(msg) => {
+            if (msg) notify(msg, 'success');
+          }}
+        />
 
         <AnimatePresence>
           {deferredPrompt && !isInstallDismissed && (

@@ -110,9 +110,9 @@ export default function LanguageSelector({ isOpen, onClose }: LanguageSelectorPr
             {/* Language Grid */}
             <div className="p-4 max-h-[60vh] overflow-y-auto no-scrollbar">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {LANGUAGES.map((lang) => (
+                {LANGUAGES.map((lang, idx) => (
                   <button
-                    key={lang.code}
+                    key={`lang-opt-${lang.code}-${idx}`}
                     onClick={() => handleLanguageSelect(lang.code)}
                     className={cn(
                       "flex items-center justify-between px-6 py-4 rounded-2xl transition-all group",
