@@ -25,6 +25,7 @@ import ThemeVisualizer from './components/layout/ThemeVisualizer';
 import AuthModal, { AuthMode } from './components/auth/AuthModal';
 import SelectionToolbar from './components/gallery/SelectionToolbar';
 import ProfileSwitcherModal from './components/auth/ProfileSwitcherModal';
+import PwaInstallPrompt from './components/ui/PwaInstallPrompt';
 import { recordProfileSession, switchActiveProfile, SavedProfile } from './services/profileManager';
 
 const AboutPage = lazy(() => import('./pages/AboutPage'));
@@ -1965,51 +1966,15 @@ function AppContent() {
           onAddNewProfile={handleAddNewProfile}
         />
 
-        <AnimatePresence>
-          {deferredPrompt && !isInstallDismissed && (
-            <motion.div
-              key="pwa-install-banner"
-              initial={{ opacity: 0, y: 100, scale: 0.9 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 100, scale: 0.9 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 150 }}
-              className="fixed bottom-6 right-6 z-[100] max-w-sm p-5 bg-card-dark/95 backdrop-blur-xl border border-white/10 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.7)] flex flex-col gap-4 text-white"
-            >
-              <div className="flex gap-3 items-start">
-                <div className="p-3 bg-brand-primary/10 border border-brand-primary/20 rounded-2xl text-brand-primary shrink-0">
-                  <Download className="w-6 h-6 animate-bounce" />
-                </div>
-                <div className="space-y-1">
-                  <h4 className="font-display font-bold text-sm tracking-wide text-text-main">
-                    Install Aether Gallery
-                  </h4>
-                  <p className="text-[11px] text-text-dim leading-relaxed font-medium">
-                    Add Aether to your home screen or desktop for an immersive full-screen visual sanctuary and offline media access.
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-2.5 justify-end">
-                <button
-                  onClick={() => {
-                    localStorage.setItem('pwa-install-banner-dismissed', 'true');
-                    setIsInstallDismissed(true);
-                  }}
-                  className="px-4 py-2 bg-white/[0.03] hover:bg-white/5 border border-white/5 hover:border-white/10 text-white/80 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-                >
-                  Dismiss
-                </button>
-                <button
-                  onClick={() => {
-                    handleInstallClick();
-                  }}
-                  className="px-4 py-2 bg-brand-primary text-white hover:bg-brand-primary/90 font-black uppercase tracking-widest text-[10px] rounded-xl shadow-lg shadow-brand-primary/20 transition-all flex items-center gap-1.5"
-                >
-                  Install App
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <PwaInstallPrompt
+          deferredPrompt={deferredPrompt}
+          isDismissed={isInstallDismissed}
+          onInstall={handleInstallClick}
+          onDismiss={() => {
+            localStorage.setItem('pwa-install-banner-dismissed', 'true');
+            setIsInstallDismissed(true);
+          }}
+        />
       </div>
   );
 }
