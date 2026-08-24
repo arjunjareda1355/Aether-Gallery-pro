@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, COLLECTIONS, handleFirestoreError, auth } from '../lib/firebase';
 import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, setDoc, deleteDoc, serverTimestamp, getDoc, getDocs } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
+import { signOut, updateProfile } from 'firebase/auth';
 import { User, Collection, Image, Follow } from '../types';
 import MasonryGrid from '../components/gallery/MasonryGrid';
 import ImageModal from '../components/gallery/ImageModal';
 import EmailVerificationModal from '../components/auth/EmailVerificationModal';
+import ProfileAvatarEditor from '../components/profile/ProfileAvatarEditor';
+import { recordProfileSession } from '../services/profileManager';
 import { hapticLight, hapticSuccess, hapticSelection, hapticMedium } from '../utils/haptics';
-import { Folder, Bookmark, User as UserIcon, ArrowLeft, Shield, Sparkles, Heart, Globe, Lock, Edit3, MapPin, Link as LinkIcon, Calendar, Briefcase, UserCircle, Save, X, ShieldCheck, CheckCircle2, Clock, Mail, Plus, Palette, Trash2, Crown, Palette as Paintbrush, UserPlus, UserMinus, Users, Upload } from 'lucide-react';
+import { Folder, Bookmark, User as UserIcon, ArrowLeft, Shield, Sparkles, Heart, Globe, Lock, Edit3, MapPin, Link as LinkIcon, Calendar, Briefcase, UserCircle, Save, X, ShieldCheck, CheckCircle2, Clock, Mail, Plus, Palette, Trash2, Crown, Palette as Paintbrush, UserPlus, UserMinus, Users, Upload, Camera, Crop } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Link, useSearchParams, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -772,6 +774,28 @@ export default function ProfilePage({
       }
 
       await updateDoc(doc(db, COLLECTIONS.USERS, targetId), cleanData);
+
+      // Sync with Firebase Auth user profile if current logged-in user
+      if (auth.currentUser && auth.currentUser.uid === targetId) {
+        try {
+          await updateProfile(auth.currentUser, {
+            displayName: cleanData.displayName || auth.currentUser.displayName,
+            photoURL: cleanData.photoURL || auth.currentUser.photoURL
+          });
+        } catch (authErr) {
+          console.warn("Auth user profile sync note:", authErr);
+        }
+      }
+
+      // Record updated session in profile switcher registry
+      if (authUser && authUser.uid === targetId) {
+        recordProfileSession({
+          ...authUser,
+          displayName: cleanData.displayName || authUser.displayName,
+          photoURL: cleanData.photoURL || authUser.photoURL,
+        });
+      }
+
       setIsEditingProfile(false);
     } catch (error) {
       console.error("Failed to update profile:", error);
@@ -888,17 +912,30 @@ export default function ProfilePage({
               <motion.div 
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
+                onClick={() => {
+                  if (isProfileOwnerOrAdmin) {
+                    setIsEditingProfile(true);
+                  }
+                }}
                 className={cn(
                   "w-14 h-14 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-white/[0.02] border p-0.5 shrink-0 transition-all shadow-xl relative z-10",
-                  isAdminProfile ? "border-brand-primary/40 ring-2 ring-brand-primary/10" : "border-white/10"
+                  isAdminProfile ? "border-brand-primary/40 ring-2 ring-brand-primary/10" : "border-white/10",
+                  isProfileOwnerOrAdmin ? "cursor-pointer hover:border-brand-primary/60 hover:ring-2 hover:ring-brand-primary/20 group/avatar" : ""
                 )}
+                title={isProfileOwnerOrAdmin ? "Click to customize & crop avatar" : undefined}
               >
-                <div className="w-full h-full rounded-[14px] overflow-hidden">
+                <div className="w-full h-full rounded-[14px] overflow-hidden relative">
                   {profileData.photoURL ? (
-                    <img src={profileData.photoURL} alt={profileData.displayName || ''} referrerPolicy="no-referrer" className="w-full h-full object-cover grayscale-0 hover:scale-105 transition-transform duration-500" />
+                    <img src={profileData.photoURL} alt={profileData.displayName || ''} referrerPolicy="no-referrer" className="w-full h-full object-cover grayscale-0 group-hover:scale-105 transition-transform duration-500" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center bg-white/5">
                       <UserCircle className="w-6 h-6 text-text-dim/20" />
+                    </div>
+                  )}
+                  {isProfileOwnerOrAdmin && (
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex flex-col items-center justify-center gap-0.5 text-white backdrop-blur-[2px]">
+                      <Camera className="w-4 h-4 text-brand-primary" />
+                      <span className="text-[7px] font-black uppercase tracking-widest text-brand-primary">Edit</span>
                     </div>
                   )}
                 </div>
@@ -1210,17 +1247,58 @@ export default function ProfilePage({
       {/* Edit Profile Modal */}
       <AnimatePresence>
         {isEditingProfile && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsEditingProfile(false)} className="absolute inset-0 bg-black/80 backdrop-blur-md" />
-            <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} onClick={(e) => e.stopPropagation()} className="relative w-full max-w-lg bg-card-dark border border-white/10 rounded-[32px] overflow-hidden">
-               <form onSubmit={handleUpdateProfile} className="p-6 space-y-4">
-                 <div className="flex justify-between items-center pb-2">
-                   <h2 className="text-sm font-black uppercase tracking-widest text-text-main">Registry Update</h2>
-                   <button type="button" onClick={() => setIsEditingProfile(false)}><X className="w-5 h-5" /></button>
+            <motion.div initial={{ opacity: 0, scale: 0.98, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 10 }} onClick={(e) => e.stopPropagation()} className="relative w-full max-w-xl bg-card-dark border border-white/10 rounded-[28px] sm:rounded-[32px] overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
+               {/* Modal Header */}
+               <div className="flex justify-between items-center px-6 py-4 border-b border-white/5 bg-white/[0.01]">
+                 <div className="flex items-center gap-2">
+                   <div className="w-2 h-2 rounded-full bg-brand-primary animate-pulse" />
+                   <h2 className="text-sm font-black uppercase tracking-widest text-text-main">
+                     {t('profile.sync_identity') || 'Sync Identity & Avatar'}
+                   </h2>
                  </div>
+                 <button 
+                   type="button" 
+                   onClick={() => setIsEditingProfile(false)}
+                   className="p-1.5 text-text-dim hover:text-text-main rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
+                 >
+                   <X className="w-5 h-5" />
+                 </button>
+               </div>
+
+               <form onSubmit={handleUpdateProfile} className="p-5 sm:p-6 space-y-5 overflow-y-auto no-scrollbar flex-1">
+                  {/* Dynamic Avatar Editor with Direct Upload, Host by Link & Interactive Cropper */}
+                  <ProfileAvatarEditor 
+                    currentPhotoURL={profileData?.photoURL}
+                    displayName={profileData?.displayName}
+                    onAvatarChange={(newPhotoURL) => {
+                      setProfileData(p => p ? { ...p, photoURL: newPhotoURL } : null);
+                    }}
+                  />
+
                   <div className="space-y-4">
-                    <input type="text" value={profileData?.displayName || ''} onChange={e => setProfileData(p => p ? {...p, displayName: e.target.value} : null)} placeholder="Display Name" className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary" />
-                    <textarea value={profileData?.bio || ''} onChange={e => setProfileData(p => p ? {...p, bio: e.target.value} : null)} placeholder="Bio" rows={3} className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary resize-none" />
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-text-dim/60">Display Name</label>
+                      <input 
+                        type="text" 
+                        value={profileData?.displayName || ''} 
+                        onChange={e => setProfileData(p => p ? {...p, displayName: e.target.value} : null)} 
+                        placeholder="Display Name" 
+                        className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary text-text-main" 
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-text-dim/60">Bio & Manifesto</label>
+                      <textarea 
+                        value={profileData?.bio || ''} 
+                        onChange={e => setProfileData(p => p ? {...p, bio: e.target.value} : null)} 
+                        placeholder="Write a brief resonance bio..." 
+                        rows={3} 
+                        className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary resize-none text-text-main" 
+                      />
+                    </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
@@ -1238,8 +1316,8 @@ export default function ProfilePage({
                           type="text" 
                           value={profileData?.occupation || ''} 
                           onChange={e => setProfileData(p => p ? {...p, occupation: e.target.value} : null)} 
-                          placeholder="Occupation" 
-                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary" 
+                          placeholder="Occupation / Craft" 
+                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary text-text-main" 
                         />
                       </div>
                     </div>
@@ -1251,8 +1329,8 @@ export default function ProfilePage({
                           type="text" 
                           value={profileData?.location || ''} 
                           onChange={e => setProfileData(p => p ? {...p, location: e.target.value} : null)} 
-                          placeholder="Location" 
-                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary" 
+                          placeholder="Location / Timezone" 
+                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary text-text-main" 
                         />
                       </div>
                       <div className="space-y-1">
@@ -1261,16 +1339,16 @@ export default function ProfilePage({
                           type="text" 
                           value={profileData?.website || ''} 
                           onChange={e => setProfileData(p => p ? {...p, website: e.target.value} : null)} 
-                          placeholder="Website link" 
-                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary" 
+                          placeholder="https://..." 
+                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary text-text-main" 
                         />
                       </div>
                     </div>
                     
                     {isAppOwner && (
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-4 pt-1 border-t border-white/5">
                         <div className="space-y-1">
-                          <label className="text-[9px] font-black uppercase tracking-widest text-text-dim/60">Followers Count</label>
+                          <label className="text-[9px] font-black uppercase tracking-widest text-brand-primary/80">Followers Count (Owner Override)</label>
                           <input 
                             type="number" 
                             min="0"
@@ -1279,11 +1357,11 @@ export default function ProfilePage({
                               const val = parseInt(e.target.value);
                               setProfileData(p => p ? {...p, followerCountOverride: isNaN(val) ? 0 : val} : null);
                             }} 
-                            className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary" 
+                            className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary text-text-main" 
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[9px] font-black uppercase tracking-widest text-text-dim/60">Following Count</label>
+                          <label className="text-[9px] font-black uppercase tracking-widest text-brand-primary/80">Following Count (Owner Override)</label>
                           <input 
                             type="number" 
                             min="0"
@@ -1292,15 +1370,29 @@ export default function ProfilePage({
                               const val = parseInt(e.target.value);
                               setProfileData(p => p ? {...p, followingCountOverride: isNaN(val) ? 0 : val} : null);
                             }} 
-                            className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary" 
+                            className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-brand-primary text-text-main" 
                           />
                         </div>
                       </div>
                     )}
                   </div>
-                 <button type="submit" disabled={isSaving} className="w-full bg-brand-primary text-bg-dark font-black py-3 rounded-xl text-[10px] uppercase tracking-widest hover:brightness-110">
-                   {isSaving ? 'Syncing...' : 'Commit to Aether'}
-                 </button>
+
+                 <div className="pt-2">
+                   <button 
+                     type="submit" 
+                     disabled={isSaving} 
+                     className="w-full bg-brand-primary text-bg-dark font-black py-3.5 rounded-xl text-[10px] uppercase tracking-widest hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-brand-primary/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                   >
+                     {isSaving ? (
+                       <>
+                         <div className="w-3.5 h-3.5 border-2 border-bg-dark border-t-transparent rounded-full animate-spin" />
+                         <span>Syncing to Sanctuary...</span>
+                       </>
+                     ) : (
+                       <span>Commit & Synchronize Identity</span>
+                     )}
+                   </button>
+                 </div>
                </form>
             </motion.div>
           </div>
