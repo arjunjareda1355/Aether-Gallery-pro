@@ -24,6 +24,8 @@ import Notification, { NotificationType } from './components/ui/Notification';
 import ThemeVisualizer from './components/layout/ThemeVisualizer';
 import AuthModal, { AuthMode } from './components/auth/AuthModal';
 import SelectionToolbar from './components/gallery/SelectionToolbar';
+import ProfileSwitcherModal from './components/auth/ProfileSwitcherModal';
+import { recordProfileSession, switchActiveProfile, SavedProfile } from './services/profileManager';
 
 const AboutPage = lazy(() => import('./pages/AboutPage'));
 const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
@@ -73,23 +75,61 @@ function AppContent() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [notification, setNotification] = useState<{ message: string, type: NotificationType } | null>(null);
 
+  const notify = useCallback((message: string, type: NotificationType = 'info') => {
+    setNotification({ message, type });
+  }, []);
+
   // Authentication Modal State
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<AuthMode>('login');
+  const [authInitialEmail, setAuthInitialEmail] = useState('');
+  const [profileSwitcherOpen, setProfileSwitcherOpen] = useState(false);
 
-  const openAuthModal = useCallback((mode: AuthMode = 'login') => {
+  const openAuthModal = useCallback((mode: AuthMode = 'login', initialEmail = '') => {
     setAuthModalMode(mode);
+    setAuthInitialEmail(initialEmail);
     setAuthModalOpen(true);
+  }, []);
+
+  const handleOpenProfileSwitcher = useCallback(() => {
+    setProfileSwitcherOpen(true);
+  }, []);
+
+  const handleSwitchToProfile = useCallback(async (targetProfile: SavedProfile) => {
+    if (user && user.uid === targetProfile.uid) {
+      setProfileSwitcherOpen(false);
+      return;
+    }
+    setProfileSwitcherOpen(false);
+    try {
+      await signOut(auth);
+      switchActiveProfile(targetProfile.uid);
+      setAuthInitialEmail(targetProfile.email || '');
+      setAuthModalMode('login');
+      setAuthModalOpen(true);
+      notify(`Switching context to ${targetProfile.displayName || targetProfile.email || 'Resident'}`, 'info');
+    } catch (err) {
+      console.error("Failed to switch profile context:", err);
+      notify('Failed to switch profile smoothly', 'error');
+    }
+  }, [user, notify]);
+
+  const handleAddNewProfile = useCallback(async () => {
+    setProfileSwitcherOpen(false);
+    try {
+      await signOut(auth);
+      setAuthInitialEmail('');
+      setAuthModalMode('login');
+      setAuthModalOpen(true);
+    } catch (err) {
+      console.error("Failed to prepare new profile context:", err);
+    }
   }, []);
 
   // Owner Bulk Select States
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [showBulkMenu, setShowBulkMenu] = useState(false);
-
-  const notify = useCallback((message: string, type: NotificationType = 'info') => {
-    setNotification({ message, type });
-  }, []);
 
   // Global listener for URL-based email verification links (verify_token or Firebase oobCode)
   useEffect(() => {
@@ -289,7 +329,7 @@ function AppContent() {
             setShowOnboarding(true);
           }
 
-          setUser({
+          const resolvedUser = {
             uid: firebaseUser.uid,
             email: firebaseUser.email,
             isAdmin: isAdmin || profileData?.isAdmin || false,
@@ -308,7 +348,12 @@ function AppContent() {
             isBanned: profileData?.isBanned || false,
             isHold: profileData?.isHold || false,
             emailVerified: profileData?.emailVerified || firebaseUser.emailVerified || false
-          });
+          };
+
+          setUser(resolvedUser);
+
+          // Save to local profile registry for effortless profile switching
+          recordProfileSession(resolvedUser);
         }, (error) => {
           console.error("Profile fetch failed:", error);
           try {
@@ -1505,6 +1550,7 @@ function AppContent() {
           onSearch={handleSearchChange} 
           onLogout={handleLogout}
           onLogin={handleLogin}
+          onOpenProfileSwitcher={handleOpenProfileSwitcher}
           onInstall={deferredPrompt ? handleInstallClick : undefined}
           recommendations={searchRecommendations}
           categories={categories}
@@ -1690,6 +1736,7 @@ function AppContent() {
                 likedImageIds={likedImageIds}
                 savedImageIds={savedImageIds}
                 onLogin={handleLogin}
+                onOpenProfileSwitcher={handleOpenProfileSwitcher}
               />
             </motion.div>
           } />
@@ -1904,9 +1951,18 @@ function AppContent() {
           isOpen={authModalOpen}
           onClose={() => setAuthModalOpen(false)}
           initialMode={authModalMode}
+          initialEmail={authInitialEmail}
           onSuccess={(msg) => {
             if (msg) notify(msg, 'success');
           }}
+        />
+
+        <ProfileSwitcherModal
+          isOpen={profileSwitcherOpen}
+          onClose={() => setProfileSwitcherOpen(false)}
+          currentUser={user}
+          onSwitchToProfile={handleSwitchToProfile}
+          onAddNewProfile={handleAddNewProfile}
         />
 
         <AnimatePresence>

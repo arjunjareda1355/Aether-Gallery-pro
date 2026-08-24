@@ -44,6 +44,7 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialMode?: AuthMode;
+  initialEmail?: string;
   onSuccess?: (message?: string) => void;
 }
 
@@ -51,11 +52,12 @@ export default function AuthModal({
   isOpen,
   onClose,
   initialMode = 'login',
+  initialEmail = '',
   onSuccess
 }: AuthModalProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -82,6 +84,9 @@ export default function AuthModal({
   useEffect(() => {
     if (isOpen) {
       setMode(initialMode);
+      if (initialEmail) {
+        setEmail(initialEmail);
+      }
       setError(null);
       setSuccessMessage(null);
       setResetSent(false);
@@ -92,7 +97,7 @@ export default function AuthModal({
         emailInputRef.current?.focus();
       }, 150);
     }
-  }, [isOpen, initialMode]);
+  }, [isOpen, initialMode, initialEmail]);
 
   // Cooldown countdown timer
   useEffect(() => {

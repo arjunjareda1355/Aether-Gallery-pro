@@ -93,55 +93,55 @@ export default function AboutPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-bg-dark pt-28 pb-16 px-4 md:px-8 relative overflow-hidden">
+    <div className="min-h-screen bg-bg-dark pt-24 pb-12 px-4 md:px-6 relative overflow-hidden">
       {/* Background Ambience */}
-      <div className="absolute top-0 right-1/4 w-96 h-96 bg-brand-primary/5 blur-[100px] rounded-full pointer-events-none" />
+      <div className="absolute top-0 right-1/4 w-72 h-72 bg-brand-primary/5 blur-[100px] rounded-full pointer-events-none" />
 
-      <div className="max-w-4xl mx-auto space-y-16 relative z-10">
+      <div className="max-w-4xl mx-auto space-y-8 relative z-10">
 
-        {/* Header / About Sanctuary Intro */}
-        <section className="text-center space-y-6 pt-6">
+        {/* Minimized Header / About Sanctuary Intro */}
+        <section className="text-center space-y-3 pt-2">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="flex justify-center mb-4"
+            className="flex justify-center mb-1"
           >
-            <Logo size="lg" className="relative z-10" />
+            <Logo size="md" className="relative z-10" />
           </motion.div>
           <motion.div 
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="space-y-3"
+            className="space-y-1.5"
           >
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-text-main/5 border border-text-main/10 text-[10px] font-bold uppercase tracking-[0.25em] text-brand-primary">
-              <Sparkles className="w-3 h-3 text-brand-primary" />
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-text-main/5 border border-text-main/10 text-[9px] font-bold uppercase tracking-[0.2em] text-brand-primary">
+              <Sparkles className="w-2.5 h-2.5 text-brand-primary" />
               <span>{t('nav.about') || 'About Sanctuary'}</span>
             </div>
-            <h1 className="text-3xl md:text-5xl font-display font-black tracking-tight uppercase text-text-main">
+            <h1 className="text-2xl md:text-3xl font-display font-black tracking-tight uppercase text-text-main">
               Aether <span className="text-brand-primary italic">Gallery</span>
             </h1>
-            <p className="text-text-dim/70 text-xs md:text-sm max-w-xl mx-auto font-medium leading-relaxed font-serif italic">
+            <p className="text-text-dim/70 text-xs max-w-lg mx-auto font-medium leading-relaxed font-serif italic">
               "Where visual poetry meets technical precision in a curated digital void."
             </p>
           </motion.div>
         </section>
 
-        {/* Refined "About Sanctuary" Features Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Minimized Features Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {sections.map((sec, idx) => (
             <motion.div 
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.08 }}
+              transition={{ delay: idx * 0.05 }}
               key={`section-${idx}`}
-              className="p-6 bg-text-main/[0.02] border border-text-main/10 rounded-2xl space-y-3 hover:bg-text-main/[0.04] hover:border-brand-primary/30 transition-all group"
+              className="p-4 bg-text-main/[0.02] border border-text-main/10 rounded-xl space-y-2 hover:bg-text-main/[0.04] hover:border-brand-primary/30 transition-all group"
             >
-              <div className="w-9 h-9 bg-text-main/5 rounded-xl border border-text-main/10 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <div className="w-7 h-7 bg-text-main/5 rounded-lg border border-text-main/10 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                 {sec.icon}
               </div>
-              <div className="space-y-1.5">
-                <h3 className="text-sm font-bold text-text-main uppercase tracking-tight">{sec.title}</h3>
-                <p className="text-xs text-text-dim/70 leading-relaxed font-medium">
+              <div className="space-y-1">
+                <h3 className="text-xs font-bold text-text-main uppercase tracking-tight">{sec.title}</h3>
+                <p className="text-[11px] text-text-dim/70 leading-relaxed font-medium">
                   {sec.content}
                 </p>
               </div>
@@ -149,16 +149,16 @@ export default function AboutPage() {
           ))}
         </div>
 
-        {/* Refined "The Architect" Section */}
+        {/* Minimized "The Architect" Section */}
         <motion.section 
-          initial={{ opacity: 0, y: 12 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="max-w-3xl mx-auto"
         >
-          <div className="p-6 md:p-8 bg-text-main/[0.02] border border-text-main/10 rounded-2xl hover:border-brand-primary/30 transition-all space-y-6">
-            <div className="flex flex-col sm:flex-row items-center gap-6">
+          <div className="p-4 sm:p-5 bg-text-main/[0.02] border border-text-main/10 rounded-2xl hover:border-brand-primary/30 transition-all">
+            <div className="flex flex-col sm:flex-row items-center gap-4">
               {/* Compact Avatar */}
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-bg-dark border border-brand-primary/30 p-0.5 shrink-0 overflow-hidden relative shadow-lg">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-bg-dark border border-brand-primary/30 p-0.5 shrink-0 overflow-hidden relative shadow-md">
                 <img 
                   src={shouldHideCreator ? "https://picsum.photos/seed/aether/600/600" : "https://picsum.photos/seed/arjun/600/600"} 
                   alt={shouldHideCreator ? "The System Architect" : "The Architect"} 
@@ -168,29 +168,29 @@ export default function AboutPage() {
               </div>
 
               {/* Architect Info */}
-              <div className="space-y-2 text-center sm:text-left flex-1">
-                <div className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.25em] text-brand-primary">
-                  <UserCheck className="w-3 h-3" />
+              <div className="space-y-1 text-center sm:text-left flex-1">
+                <div className="inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-[0.2em] text-brand-primary">
+                  <UserCheck className="w-2.5 h-2.5" />
                   <span>{shouldHideCreator ? "System Protocol" : t('nav.architect')}</span>
                 </div>
-                <h2 className="text-xl sm:text-2xl font-display font-black text-text-main uppercase tracking-tight">
+                <h2 className="text-base sm:text-lg font-display font-black text-text-main uppercase tracking-tight">
                   {shouldHideCreator ? "Aether Architect" : "Arjun Bharti Mina"}
                 </h2>
-                <p className="text-xs text-text-dim/70 font-medium leading-relaxed max-w-lg">
+                <p className="text-[11px] text-text-dim/70 font-medium leading-relaxed max-w-lg">
                   {shouldHideCreator 
                     ? "Systems Architect bridging clean interface paradigms with robust design protocols." 
-                    : "Artist, Digital Creator, & Systems Architect bridging creative vision with technical precision."}
+                    : "Artist, Creator, & Systems Architect bridging creative vision with technical precision."}
                 </p>
               </div>
 
               {/* Link */}
-              <div className="shrink-0 pt-2 sm:pt-0">
+              <div className="shrink-0">
                 <Link 
                   to="/developer"
-                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-text-main/5 hover:bg-brand-primary hover:text-black border border-text-main/10 hover:border-brand-primary rounded-xl text-xs font-bold text-text-main uppercase tracking-wider transition-all"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-text-main/5 hover:bg-brand-primary hover:text-black border border-text-main/10 hover:border-brand-primary rounded-xl text-[10px] font-bold text-text-main uppercase tracking-wider transition-all"
                 >
                   <span>{t('nav.architect')}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <ArrowRight className="w-3 h-3" />
                 </Link>
               </div>
             </div>
@@ -198,7 +198,7 @@ export default function AboutPage() {
         </motion.section>
 
         {/* Registry Support Section with Get in Touch */}
-        <section className="space-y-8 pt-10 border-t border-text-main/10">
+        <section className="space-y-5 pt-4 border-t border-text-main/10">
           <div className="flex flex-col items-center space-y-2 text-center">
             <div className="w-10 h-10 bg-brand-primary/10 rounded-xl flex items-center justify-center text-brand-primary border border-brand-primary/20 mb-1">
               <HelpCircle className="w-5 h-5" />

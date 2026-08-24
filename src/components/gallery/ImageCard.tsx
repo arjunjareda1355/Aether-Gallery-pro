@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { cn, copyToClipboard } from '../../lib/utils';
 import { Image, User } from '../../types';
 import { trackActivity } from '../../lib/recommendation';
+import { shareAsset } from '../../utils/shareUtils';
 
 interface ImageCardProps {
   image: Image;
@@ -389,92 +390,9 @@ export default React.memo(function ImageCard({
       return;
     }
     
-    const shareUrl = `${window.location.origin}/?post=${image.id}`;
-    const originalHostingLink = image.externalLink || 
-      (image.url && image.url.startsWith('http') && !image.url.includes('firebasestorage') && !image.url.includes('blob:') ? image.url : null);
-
-    const isYoutubeOnly = /youtube\.com|youtu\.be/i.test(image.url) || 
-      (originalHostingLink ? /youtube\.com|youtu\.be/i.test(originalHostingLink) : false);
-
-    let shareText = `✨ Aether Sanctuary – Manifestation of Vision ✨\n\n` +
-      `🌌 Title: ${image.title}\n` +
-      (image.description ? `🌿 Description: ${image.description}\n` : '') +
-      (image.category ? `🏷️ Category: ${image.category}\n` : '') +
-      (image.uploaderName ? `✍️ Curated by: ${image.uploaderName}\n` : '');
-
-    if (originalHostingLink) {
-      shareText += `🌐 Original Hosting Source: ${originalHostingLink}\n`;
-    }
-
-    shareText += `🔗 View post in app: ${shareUrl}\n\n` +
-      `Join the Aether digital gallery, an aesthetic sanctuary for high-resolution vision and design exploration. Let's create together!\n` +
-      `👉 ${window.location.origin}`;
-
-    const shareData: ShareData = {
-      title: image.title,
-      text: shareText,
-      url: shareUrl,
-    };
-
-    if (user) trackActivity(user.uid, [image.category, ...image.tags], 'share');
-
-    // 1. YouTube-only videos: Share hosting link and Aether message only (skip binary blob fetch)
-    if (isYoutubeOnly) {
-      if (navigator.share) {
-        try {
-          await navigator.share(shareData);
-          return;
-        } catch (err) {
-          console.warn("YouTube share canceled or unsupported:", err);
-        }
-      }
-      const success = await copyToClipboard(`${shareText}\n${shareUrl}`);
-      if (success) {
-        alert("YouTube post link and hosting details copied to clipboard!");
-      }
-      return;
-    }
-
-    // 2. Try file sharing with media file (image or video file) + unique post link + hosting source
-    const targetMedia = image.url || image.thumbnailUrl;
-    if (targetMedia) {
-      try {
-        const response = await fetch(targetMedia);
-        if (response.ok) {
-          const blob = await response.blob();
-          const ext = blob.type.split('/')[1] || (image.type === 'video' ? 'mp4' : 'jpg');
-          const cleanTitle = image.title.replace(/[^a-zA-Z0-9_-]/g, '_');
-          const file = new File([blob], `${cleanTitle}_Aether.${ext}`, { type: blob.type });
-
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            await navigator.share({
-              ...shareData,
-              files: [file],
-            });
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("Media share file fetch failed, falling back to link/text share:", err);
-      }
-    }
-
-    // 3. Fallback: Generic Navigator Share
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-        return;
-      } catch (err) {
-        console.warn("Navigator share failed:", err);
-      }
-    }
-
-    // 4. Absolute Fallback: Clipboard
-    const success = await copyToClipboard(`${shareText}\n${shareUrl}`);
-    if (success) {
-      alert("Unique post link, hosting source, and curation details copied to clipboard!");
-    } else {
-      console.warn("Clipboard fallback failed.");
+    const res = await shareAsset(image, user);
+    if (res.method === 'clipboard') {
+      alert(res.message);
     }
   };
 

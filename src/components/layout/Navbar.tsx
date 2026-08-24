@@ -1,4 +1,4 @@
-import { Search, Menu, User, PlusCircle, LogOut, X, Shield, Info, UserCircle, Sparkles, Download, Palette, Filter, ChevronDown, Activity, Globe } from 'lucide-react';
+import { Search, Menu, User, PlusCircle, LogOut, X, Shield, Info, UserCircle, Sparkles, Download, Palette, Filter, ChevronDown, Activity, Globe, Users } from 'lucide-react';
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -12,6 +12,7 @@ import CategoryMenu from '../gallery/CategoryMenu';
 import { useClickOutside } from '../../lib/useClickOutside';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../lib/firebase';
+import { getSavedProfiles } from '../../services/profileManager';
 
 interface NavbarProps {
   searchQuery: string;
@@ -20,6 +21,7 @@ interface NavbarProps {
   user: UserType | null;
   onLogout: () => void;
   onLogin: () => void;
+  onOpenProfileSwitcher?: () => void;
   onInstall?: () => void;
   recommendations?: string[];
   // New props for unified filters
@@ -43,6 +45,7 @@ export default React.memo(function Navbar({
   user, 
   onLogout, 
   onLogin, 
+  onOpenProfileSwitcher, 
   onInstall, 
   recommendations = [],
   categories,
@@ -88,37 +91,85 @@ export default React.memo(function Navbar({
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  // Logo Tap and Long Press logic
+  // Logo Double-Click and Dual-Tap logic (opens in same tab)
+  const lastTapRef = useRef<number>(0);
+  const clickTimerRef = useRef<any>(null);
   const longPressTimeout = useRef<any>(null);
   const isLongPressActive = useRef<boolean>(false);
   const pressStarted = useRef<boolean>(false);
 
-  const startPress = (e: React.MouseEvent | React.TouchEvent) => {
+  const getLogoTarget = () => {
+    return branding.logoIconUrl || (branding.logoLink.startsWith('http') ? branding.logoLink : 'https://i.postimg.cc/8P2zP9z8/aether-logo.png');
+  };
+
+  const openLogoInSameTab = () => {
+    const targetUrl = getLogoTarget();
+    window.open(targetUrl, '_self');
+  };
+
+  const handleLogoClick = (e: React.MouseEvent) => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    clickTimerRef.current = setTimeout(() => {
+      navigate('/');
+    }, 250);
+  };
+
+  const handleLogoDoubleClick = (e: React.MouseEvent) => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    openLogoInSameTab();
+  };
+
+  const handleLogoTouchStart = (e: React.TouchEvent) => {
     pressStarted.current = true;
     isLongPressActive.current = false;
     longPressTimeout.current = setTimeout(() => {
       isLongPressActive.current = true;
-      const targetUrl = branding.logoIconUrl || (branding.logoLink.startsWith('http') ? branding.logoLink : 'https://i.postimg.cc/8P2zP9z8/aether-logo.png');
-      window.location.href = targetUrl;
+      openLogoInSameTab();
     }, 800);
   };
 
-  const endPress = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!pressStarted.current) return;
-    pressStarted.current = false;
+  const handleLogoTouchEnd = (e: React.TouchEvent) => {
     if (longPressTimeout.current) {
       clearTimeout(longPressTimeout.current);
     }
-    if (!isLongPressActive.current) {
-      navigate('/');
-    } else {
+    if (isLongPressActive.current) {
       e.preventDefault();
       e.stopPropagation();
+      return;
+    }
+
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 350;
+    if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+      // Double tap detected
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      lastTapRef.current = 0;
+      openLogoInSameTab();
+    } else {
+      lastTapRef.current = now;
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+      }
+      clickTimerRef.current = setTimeout(() => {
+        navigate('/');
+      }, 250);
     }
   };
 
-  const cancelPress = () => {
-    pressStarted.current = false;
+  const handleLogoTouchCancel = () => {
     if (longPressTimeout.current) {
       clearTimeout(longPressTimeout.current);
     }
@@ -147,13 +198,13 @@ export default React.memo(function Navbar({
         {/* AETHER LOGO - Extreme Left */}
         <div className="flex items-center shrink-0">
           <div 
-            onMouseDown={startPress}
-            onMouseUp={endPress}
-            onMouseLeave={cancelPress}
-            onTouchStart={startPress}
-            onTouchEnd={endPress}
-            onTouchMove={cancelPress}
+            onClick={handleLogoClick}
+            onDoubleClick={handleLogoDoubleClick}
+            onTouchStart={handleLogoTouchStart}
+            onTouchEnd={handleLogoTouchEnd}
+            onTouchCancel={handleLogoTouchCancel}
             onContextMenu={(e) => e.preventDefault()}
+            title="Double-click to open in same tab"
             className="flex items-center gap-3 group relative cursor-pointer select-none"
           >
             <div className="absolute inset-x-0 -inset-y-4 bg-brand-primary/10 blur-3xl rounded-full opacity-50" />
@@ -270,6 +321,21 @@ export default React.memo(function Navbar({
                       <Link to="/profile" onClick={() => setUserMenuOpen(false)} className="px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-text-dim hover:text-text-main transition-all">
                         <UserCircle className="w-3.5 h-3.5" /> {t('nav.my_registry')}
                       </Link>
+                      {onOpenProfileSwitcher && (
+                        <button 
+                          onClick={() => { onOpenProfileSwitcher(); setUserMenuOpen(false); }} 
+                          className="w-full px-4 py-2.5 hover:bg-white/[0.03] flex items-center justify-between text-[10px] font-black uppercase tracking-[0.1em] text-brand-primary hover:text-brand-primary transition-all text-left"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Users className="w-3.5 h-3.5" /> Switch Profile
+                          </div>
+                          {getSavedProfiles().length > 1 && (
+                            <span className="px-1.5 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary text-[8px] font-mono font-bold">
+                              {getSavedProfiles().length}
+                            </span>
+                          )}
+                        </button>
+                      )}
                       <button onClick={() => { setThemeSelectorOpen(true); setUserMenuOpen(false); }} className="w-full px-4 py-2.5 hover:bg-white/[0.03] flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.1em] text-brand-primary hover:text-brand-primary transition-all">
                         <Palette className="w-3.5 h-3.5" /> {t('nav.theme')}
                       </button>

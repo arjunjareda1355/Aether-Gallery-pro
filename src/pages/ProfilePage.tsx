@@ -20,6 +20,7 @@ interface ProfilePageProps {
   likedImageIds: Set<string>;
   savedImageIds: Set<string>;
   onLogin?: () => void;
+  onOpenProfileSwitcher?: () => void;
 }
 
 type TabType = 'collections' | 'likes' | 'uploads';
@@ -152,7 +153,8 @@ export default function ProfilePage({
   onSave, 
   likedImageIds, 
   savedImageIds,
-  onLogin
+  onLogin,
+  onOpenProfileSwitcher
 }: ProfilePageProps) {
   const { profileId } = useParams();
   const targetId = profileId || authUser?.uid;
@@ -1029,6 +1031,15 @@ export default function ProfilePage({
                   >
                     {t('profile.sync_identity') || 'Sync Identity'}
                   </button>
+                  {onOpenProfileSwitcher && (
+                    <button 
+                      onClick={onOpenProfileSwitcher}
+                      className="px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/30 hover:bg-brand-primary/20 text-brand-primary rounded-xl text-[8px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 whitespace-nowrap cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Users className="w-3 h-3" />
+                      <span>Switch Profile</span>
+                    </button>
+                  )}
                   <button 
                     onClick={() => {
                       setDeleteStep(1);
