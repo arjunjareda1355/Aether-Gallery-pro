@@ -30,87 +30,50 @@ export default function Logo({ className, size = 'md' }: LogoProps) {
     return () => unsub();
   }, []);
 
-  const sizes = {
-    xs: 'w-5 h-5',
-    sm: 'w-6 h-6',
-    md: 'w-8 h-8',
-    lg: 'w-12 h-12',
-    xl: 'w-20 h-20'
+  const sizeClasses = {
+    xs: 'w-7 h-7 rounded-xl text-[12px]',
+    sm: 'w-9 h-9 rounded-xl text-[14px]',
+    md: 'w-11 h-11 rounded-2xl text-[17px]',
+    lg: 'w-16 h-16 rounded-2xl text-[26px]',
+    xl: 'w-22 h-22 rounded-[28px] text-[38px]'
   };
 
-  const fontSize = size === 'xs' ? '8px' : size === 'sm' ? '10px' : size === 'md' ? '14px' : size === 'lg' ? '20px' : '36px';
-
   return (
-    <div className={cn("relative flex items-center justify-center group", sizes[size], className)}>
-      {/* Background Pulse */}
-      <motion.div 
-        animate={{ 
-          scale: [1, 1.2, 1],
-          opacity: [0.1, 0.2, 0.1]
-        }}
-        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute inset-0 bg-brand-primary blur-xl rounded-full" 
-      />
-      
-      {/* Dynamic Rings */}
-      <motion.div 
-        animate={{ rotate: 360 }}
-        transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-        className="absolute inset-[-2px] border border-brand-primary/20 rounded-full opacity-40 group-hover:opacity-100 transition-opacity" 
-      />
-      <motion.div 
-        animate={{ rotate: -360 }}
-        transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-        className="absolute inset-[-6px] border border-brand-primary/10 rounded-full opacity-20 group-hover:opacity-60 transition-opacity" 
-      />
-      
-      {/* Core Prism Shield */}
-      <motion.div 
-        whileHover={{ rotate: 180, scale: 1.1 }}
-        transition={{ type: "spring", stiffness: 200, damping: 15 }}
-        className="absolute inset-0 bg-gradient-to-br from-brand-primary via-brand-secondary to-brand-primary rounded-[30%] rotate-45 shadow-[0_0_20px_rgba(var(--brand-primary-rgb),0.3)]"
+    <div className={cn("relative inline-flex items-center justify-center group select-none shrink-0", className)}>
+      {/* Subtle Warm Ambient Glow */}
+      <div className="absolute inset-0 bg-brand-primary/25 blur-md rounded-2xl opacity-40 group-hover:opacity-80 group-hover:blur-lg transition-all duration-500 scale-95 group-hover:scale-105 pointer-events-none" />
+
+      {/* Main Logo Container */}
+      <motion.div
+        whileHover={{ scale: 1.04 }}
+        whileTap={{ scale: 0.96 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+        className={cn(
+          "relative flex items-center justify-center overflow-hidden border border-white/15 bg-gradient-to-b from-white/[0.09] via-card-dark to-black/60 shadow-[0_4px_20px_rgba(0,0,0,0.6)] backdrop-blur-md transition-colors duration-300 group-hover:border-brand-primary/50 group-hover:shadow-[0_0_24px_rgba(242,125,38,0.25)]",
+          sizeClasses[size]
+        )}
       >
-        {/* Inner Glass */}
-        <div className="absolute inset-[2px] bg-bg-dark rounded-[28%] flex items-center justify-center overflow-hidden">
-          <motion.div 
-            animate={{ 
-              y: [-10, 10, -10],
-              opacity: [0.3, 0.6, 0.3]
-            }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-            className="absolute inset-0 bg-gradient-to-b from-brand-primary/20 to-transparent" 
-            style={{ width: '100%', height: '100%' }}
-          />
-        </div>
-      </motion.div>
-      
-      {/* Central Symbol */}
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="relative text-text-main font-display font-medium flex items-center justify-center select-none drop-shadow-[0_0_8px_rgba(255,255,255,0.3)] w-full h-full overflow-hidden p-1"
-        style={{ fontSize }}
-      >
+        {/* Subtle Diagonal Sheen Highlight */}
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.04] to-transparent pointer-events-none" />
+
+        {/* Central Emblem / Glyph / Image */}
         {logoConfig.logoIconUrl ? (
           <img 
             src={logoConfig.logoIconUrl} 
             alt="Logo" 
             referrerPolicy="no-referrer"
-            className="w-full h-full object-contain rounded-full scale-[0.85]" 
+            className="w-full h-full object-contain p-1.5 rounded-xl" 
           />
         ) : (
-          logoConfig.logoText
+          <span className="font-display font-black tracking-tighter bg-gradient-to-b from-white via-amber-100 to-brand-primary bg-clip-text text-transparent drop-shadow-sm transform -translate-y-[0.5px]">
+            {logoConfig.logoText || 'Æ'}
+          </span>
         )}
-      </motion.div>
 
-      {/* Orbiting Particles */}
-      <motion.div 
-        animate={{ rotate: 360 }}
-        transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-        className="absolute inset-0 pointer-events-none"
-      >
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-brand-primary rounded-full blur-[1px]" />
+        {/* Crisp Corner Accent */}
+        <div className="absolute top-1 right-1 w-1 h-1 rounded-full bg-brand-primary/40 group-hover:bg-brand-primary transition-colors duration-300" />
       </motion.div>
     </div>
   );
 }
+

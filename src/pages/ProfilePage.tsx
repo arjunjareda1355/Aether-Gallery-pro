@@ -870,13 +870,13 @@ export default function ProfilePage({
         </Link>
       </div>
 
-      {/* Header - Refined & Minimized */}
+      {/* Header - Minimalist & Refined */}
       <div className={cn(
-        "relative mb-3 px-4 sm:px-6 md:px-8 py-4 sm:py-8 transition-all overflow-hidden sm:rounded-3xl border-y sm:border border-white/5 bg-white/[0.01] backdrop-blur-3xl shadow-xl group",
-        isAdminProfile ? "border-brand-primary/30 ring-1 ring-brand-primary/10" : ""
+        "relative mb-4 px-4 sm:px-6 py-5 sm:py-6 transition-all overflow-hidden sm:rounded-3xl border-y sm:border border-white/5 bg-white/[0.015] backdrop-blur-2xl shadow-lg group",
+        isAdminProfile ? "border-brand-primary/20 ring-1 ring-brand-primary/10" : ""
       )}>
         {backgroundProgress.running && (
-          <div className="absolute top-0 inset-x-0 bg-brand-primary/10 border-b border-brand-primary/20 px-4 py-2 flex items-center justify-between text-[8px] font-black uppercase tracking-wider text-brand-primary z-50">
+          <div className="absolute top-0 inset-x-0 bg-brand-primary/10 border-b border-brand-primary/20 px-4 py-1.5 flex items-center justify-between text-[8px] font-black uppercase tracking-wider text-brand-primary z-50">
             <div className="flex items-center gap-2">
               <Sparkles className="w-3 h-3 animate-spin" />
               <span>Aether Grid Compilation: {formatCount(backgroundProgress.total)} soul registers...</span>
@@ -893,62 +893,95 @@ export default function ProfilePage({
           </div>
         )}
 
-        <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
-          <div className="absolute -top-24 -right-24 w-72 h-72 bg-brand-primary/5 blur-[100px] rounded-full group-hover:bg-brand-primary/10 transition-colors duration-1000" />
-          <div className="absolute -bottom-24 -left-24 w-72 h-72 bg-brand-secondary/5 blur-[100px] rounded-full" />
-        </div>
-
-        {isAdminProfile && (
-          <div className="absolute top-0 right-0 p-6 opacity-10 pointer-events-none group-hover:opacity-20 transition-opacity duration-1000">
-            <Crown className="w-24 h-24 text-brand-primary rotate-12" />
-          </div>
-        )}
-        
         <div className="flex flex-col gap-4 relative z-10 max-w-4xl text-left">
-          {/* Top Row: Avatar on left, stats adjacent */}
-          <div className="flex items-center gap-4 sm:gap-6">
-            {/* Top-Left profile picture */}
-            <div className="relative group shrink-0">
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                onClick={() => {
-                  if (isProfileOwnerOrAdmin) {
-                    setIsEditingProfile(true);
-                  }
-                }}
-                className={cn(
-                  "w-14 h-14 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-white/[0.02] border p-0.5 shrink-0 transition-all shadow-xl relative z-10",
-                  isAdminProfile ? "border-brand-primary/40 ring-2 ring-brand-primary/10" : "border-white/10",
-                  isProfileOwnerOrAdmin ? "cursor-pointer hover:border-brand-primary/60 hover:ring-2 hover:ring-brand-primary/20 group/avatar" : ""
-                )}
-                title={isProfileOwnerOrAdmin ? "Click to customize & crop avatar" : undefined}
-              >
-                <div className="w-full h-full rounded-[14px] overflow-hidden relative">
-                  {profileData.photoURL ? (
-                    <img src={profileData.photoURL} alt={profileData.displayName || ''} referrerPolicy="no-referrer" className="w-full h-full object-cover grayscale-0 group-hover:scale-105 transition-transform duration-500" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-white/5">
-                      <UserCircle className="w-6 h-6 text-text-dim/20" />
-                    </div>
+          {/* Top Section: Avatar, Identity & Stats */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            {/* Left: Avatar & Identity info */}
+            <div className="flex items-center gap-3.5 sm:gap-4.5">
+              {/* Profile Avatar */}
+              <div className="relative group shrink-0">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  onClick={() => {
+                    if (isProfileOwnerOrAdmin) {
+                      setIsEditingProfile(true);
+                    }
+                  }}
+                  className={cn(
+                    "w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-white/[0.02] border p-0.5 shrink-0 transition-all shadow-md relative z-10",
+                    isAdminProfile ? "border-brand-primary/40 ring-1 ring-brand-primary/20" : "border-white/10",
+                    isProfileOwnerOrAdmin ? "cursor-pointer hover:border-brand-primary/60 hover:ring-2 hover:ring-brand-primary/20 group/avatar" : ""
                   )}
-                  {isProfileOwnerOrAdmin && (
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex flex-col items-center justify-center gap-0.5 text-white backdrop-blur-[2px]">
-                      <Camera className="w-4 h-4 text-brand-primary" />
-                      <span className="text-[7px] font-black uppercase tracking-widest text-brand-primary">Edit</span>
+                  title={isProfileOwnerOrAdmin ? "Click to customize & crop avatar" : undefined}
+                >
+                  <div className="w-full h-full rounded-[14px] overflow-hidden relative">
+                    {profileData.photoURL ? (
+                      <img src={profileData.photoURL} alt={profileData.displayName || ''} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-white/5">
+                        <UserCircle className="w-6 h-6 text-text-dim/30" />
+                      </div>
+                    )}
+                    {isProfileOwnerOrAdmin && (
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex flex-col items-center justify-center gap-0.5 text-white backdrop-blur-[2px]">
+                        <Camera className="w-3.5 h-3.5 text-brand-primary" />
+                        <span className="text-[6.5px] font-black uppercase tracking-wider text-brand-primary">Edit</span>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
+
+              {/* Identity text: Name & Email with Minimized Verification Tick right after email */}
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-base sm:text-xl font-display font-black tracking-tight text-text-main uppercase leading-tight truncate">
+                    {profileData.displayName || 'Resident'}
+                  </h1>
+                  {isAdminProfile && (
+                    <div className="bg-brand-primary/10 border border-brand-primary/30 text-brand-primary rounded-md px-1.5 py-0.5 flex items-center gap-1 shadow-sm">
+                      <ShieldCheck className="w-2.5 h-2.5 text-brand-primary" />
+                      <span className="text-[7px] font-black uppercase tracking-wider">Architect</span>
                     </div>
                   )}
                 </div>
-              </motion.div>
+
+                {/* Email with Minimized Tick directly after */}
+                {profileData.email && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] sm:text-[11px] text-text-dim/60 font-mono select-all">
+                      {profileData.email}
+                    </span>
+                    {Boolean(profileData.emailVerified || (isOwnProfile && authUser?.emailVerified)) ? (
+                      <span title="Verified email" className="inline-flex items-center text-emerald-400">
+                        <CheckCircle2 className="w-3.5 h-3.5 fill-emerald-400/20 stroke-[2.5]" />
+                      </span>
+                    ) : isOwnProfile ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          hapticLight();
+                          setIsVerifyModalOpen(true);
+                        }}
+                        className="inline-flex items-center text-brand-primary hover:text-white text-[8px] font-black uppercase tracking-wider transition-colors ml-0.5 cursor-pointer"
+                        title="Verify this email"
+                      >
+                        (Verify)
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Stats row following picture */}
-            <div className="flex gap-5 sm:gap-8 items-center select-none">
+            {/* Right: Clean Stats Layout */}
+            <div className="flex items-center gap-6 sm:gap-7 select-none pt-2 sm:pt-0 border-t sm:border-t-0 border-white/5">
               <div className="flex flex-col items-start">
-                <span className="text-sm sm:text-lg font-black text-text-main leading-tight">
+                <span className="text-sm sm:text-base font-black text-text-main leading-none">
                   {formatCount(userUploadsMemo.length)}
                 </span>
-                <span className="text-[6.5px] sm:text-[7.5px] font-black uppercase tracking-wider text-text-dim/40">Contributions</span>
+                <span className="text-[7.5px] font-medium uppercase tracking-wider text-text-dim/50 mt-1">Uploads</span>
               </div>
               
               <button 
@@ -956,12 +989,12 @@ export default function ProfilePage({
                   setContactsModalTab('followers');
                   setIsContactsModalOpen(true);
                 }}
-                className="flex flex-col items-start group/stat shrink-0 hover:opacity-80 transition-opacity text-left"
+                className="flex flex-col items-start group/stat shrink-0 hover:opacity-80 transition-opacity text-left cursor-pointer"
               >
-                <span className="text-sm sm:text-lg font-black text-text-main group-hover/stat:text-brand-primary transition-colors leading-tight">
+                <span className="text-sm sm:text-base font-black text-text-main group-hover/stat:text-brand-primary transition-colors leading-none">
                   {formatCount(profileData?.followerCountOverride !== undefined ? profileData.followerCountOverride : followersList.length)}
                 </span>
-                <span className="text-[6.5px] sm:text-[7.5px] font-black uppercase tracking-wider text-text-dim/40">{t('profile.followers')}</span>
+                <span className="text-[7.5px] font-medium uppercase tracking-wider text-text-dim/50 mt-1">{t('profile.followers')}</span>
               </button>
 
               <button 
@@ -969,109 +1002,73 @@ export default function ProfilePage({
                   setContactsModalTab('following');
                   setIsContactsModalOpen(true);
                 }}
-                className="flex flex-col items-start group/stat shrink-0 hover:opacity-80 transition-opacity text-left"
+                className="flex flex-col items-start group/stat shrink-0 hover:opacity-80 transition-opacity text-left cursor-pointer"
               >
-                <span className="text-sm sm:text-lg font-black text-text-main group-hover/stat:text-brand-primary transition-colors leading-tight">
+                <span className="text-sm sm:text-base font-black text-text-main group-hover/stat:text-brand-primary transition-colors leading-none">
                   {formatCount(profileData?.followingCountOverride !== undefined ? profileData.followingCountOverride : followingList.length)}
                 </span>
-                <span className="text-[6.5px] sm:text-[7.5px] font-black uppercase tracking-wider text-text-dim/40">{t('profile.following')}</span>
+                <span className="text-[7.5px] font-medium uppercase tracking-wider text-text-dim/50 mt-1">{t('profile.following')}</span>
               </button>
             </div>
           </div>
 
-          {/* Below top row: Name, email, bio, DOB, location */}
-          <div className="space-y-2 pt-2 border-t border-white/[0.04]">
-            <div className="space-y-0.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-lg sm:text-2xl font-display font-black tracking-tight text-text-main uppercase italic leading-tight break-words max-w-full">
-                  {profileData.displayName || 'Resident'}
-                </h1>
-                {isAdminProfile && (
-                  <div className="flex items-center">
-                    <div className="bg-brand-primary/10 border border-brand-primary/30 text-brand-primary rounded-lg px-2 py-0.5 flex items-center gap-1 shadow-sm">
-                      <ShieldCheck className="w-3 h-3 text-brand-primary" />
-                      <span className="text-[7px] font-black uppercase tracking-widest leading-none">Architect</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center flex-wrap gap-2 pt-0.5">
-                {Boolean(profileData.emailVerified || (isOwnProfile && authUser?.emailVerified)) ? (
-                  <div className="inline-flex items-center gap-1 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-md font-mono text-[7.5px] sm:text-[8.5px] font-bold tracking-wider shadow-sm select-none">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400 fill-emerald-400/20 shrink-0" />
-                    <span>Verified</span>
-                  </div>
-                ) : isOwnProfile && profileData.email ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      hapticLight();
-                      setIsVerifyModalOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1 bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-bg-dark border border-brand-primary/30 hover:border-brand-primary px-2 py-0.5 rounded-md text-[7.5px] sm:text-[8.5px] font-black uppercase tracking-wider transition-all active:scale-95 shadow-sm cursor-pointer select-none"
-                    title="Verify this email with a secure verification link"
-                  >
-                    <ShieldCheck className="w-2.5 h-2.5 shrink-0" />
-                    <span>Verify</span>
-                  </button>
-                ) : null}
-                <p className="text-[7.5px] sm:text-[8.5px] text-text-dim/50 font-bold uppercase tracking-wider select-all font-mono">{profileData.email}</p>
-              </div>
-            </div>
-
+          {/* Bio & Meta tags & Action Buttons */}
+          <div className="space-y-2.5 pt-2 border-t border-white/[0.04]">
             {profileData.bio && (
-              <p className="text-xs text-text-dim/80 leading-snug font-light italic max-w-2xl font-serif">
-                "{profileData.bio}"
+              <p className="text-xs text-text-dim/80 leading-relaxed font-light max-w-2xl">
+                {profileData.bio}
               </p>
             )}
 
-            {/* Metadata tags */}
-            <div className="flex flex-wrap gap-x-3 gap-y-1.5 pt-1 text-[7.5px] sm:text-[8.5px] font-bold uppercase tracking-wider text-text-dim/50">
-              {profileData.dob && (
-                <div className="flex items-center gap-1 text-brand-primary/80 bg-brand-primary/5 px-2 py-0.5 rounded-md border border-brand-primary/10">
-                  <Calendar className="w-2.5 h-2.5 text-brand-primary shrink-0" />
-                  <span>DOB: {profileData.dob}</span>
-                </div>
-              )}
-              {profileData.location && (
-                <div className="flex items-center gap-1 bg-white/[0.02] px-2 py-0.5 rounded-md border border-white/5">
-                  <MapPin className="w-2.5 h-2.5 text-text-dim/50 shrink-0" />
-                  <span>{profileData.location}</span>
-                </div>
-              )}
-              {profileData.occupation && (
-                <div className="flex items-center gap-1 bg-white/[0.02] px-2 py-0.5 rounded-md border border-white/5">
-                  <Briefcase className="w-2.5 h-2.5 text-text-dim/50 shrink-0" />
-                  <span>{profileData.occupation}</span>
-                </div>
-              )}
-              {profileData.website && (
-                <a 
-                  href={profileData.website.startsWith('http') ? profileData.website : `https://${profileData.website}`}
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-brand-primary hover:text-white transition-colors bg-white/[0.02] px-2 py-0.5 rounded-md border border-white/5"
-                >
-                  <LinkIcon className="w-2.5 h-2.5 shrink-0" />
-                  <span>Website</span>
-                </a>
-              )}
-            </div>
+            {/* Minimalist Metadata tags */}
+            {(profileData.dob || profileData.location || profileData.occupation || profileData.website) && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[8.5px] text-text-dim/60 font-mono">
+                {profileData.dob && (
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-2.5 h-2.5 text-brand-primary/70 shrink-0" />
+                    <span>{profileData.dob}</span>
+                  </div>
+                )}
+                {profileData.location && (
+                  <div className="flex items-center gap-1">
+                    <MapPin className="w-2.5 h-2.5 text-text-dim/50 shrink-0" />
+                    <span>{profileData.location}</span>
+                  </div>
+                )}
+                {profileData.occupation && (
+                  <div className="flex items-center gap-1">
+                    <Briefcase className="w-2.5 h-2.5 text-text-dim/50 shrink-0" />
+                    <span>{profileData.occupation}</span>
+                  </div>
+                )}
+                {profileData.website && (
+                  <a 
+                    href={profileData.website.startsWith('http') ? profileData.website : `https://${profileData.website}`}
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-brand-primary hover:underline transition-colors"
+                  >
+                    <LinkIcon className="w-2.5 h-2.5 shrink-0" />
+                    <span>{profileData.website.replace(/^https?:\/\//, '')}</span>
+                  </a>
+                )}
+              </div>
+            )}
 
             {/* Action Buttons */}
-            <div className="flex pt-2">
+            <div className="flex pt-1">
               {isProfileOwnerOrAdmin ? (
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   <button 
                     onClick={() => setIsEditingProfile(true)}
-                    className="px-3 py-1.5 bg-white/[0.04] border border-white/10 hover:border-brand-primary/40 text-text-main rounded-xl text-[8px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 whitespace-nowrap cursor-pointer"
+                    className="px-3 py-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-brand-primary/40 text-text-main rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap cursor-pointer"
                   >
-                    {t('profile.sync_identity') || 'Sync Identity'}
+                    {t('profile.sync_identity') || 'Edit Profile'}
                   </button>
                   {onOpenProfileSwitcher && (
                     <button 
                       onClick={onOpenProfileSwitcher}
-                      className="px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/30 hover:bg-brand-primary/20 text-brand-primary rounded-xl text-[8px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 whitespace-nowrap cursor-pointer flex items-center gap-1.5"
+                      className="px-3 py-1.5 bg-brand-primary/10 border border-brand-primary/30 hover:bg-brand-primary/20 text-brand-primary rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 whitespace-nowrap cursor-pointer flex items-center gap-1.5"
                     >
                       <Users className="w-3 h-3" />
                       <span>Switch Profile</span>
@@ -1093,7 +1090,7 @@ export default function ProfilePage({
                 <button 
                   onClick={handleFollow}
                   className={cn(
-                    "px-4 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer",
+                    "px-4 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer",
                     isFollowing 
                       ? "bg-white/5 text-text-dim border border-white/10" 
                       : "bg-brand-primary text-bg-dark border border-brand-primary hover:scale-105"
