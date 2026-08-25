@@ -100,7 +100,7 @@ export default function AuthModal({
                   Aether Identity
                 </h3>
                 <p className="text-[10px] text-text-dim flex items-center gap-1 font-medium">
-                  <ShieldCheck className="w-3 h-3 text-emerald-400" /> Powered by Clerk Auth
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" /> Secure Sanctuary Gateway
                 </p>
               </div>
             </div>
@@ -132,7 +132,7 @@ export default function AuthModal({
               className={cn(
                 "flex-1 py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2",
                 tab === 'signup'
-                  ? "bg-brand-primary text-bg-dark font-black shadow-lg shadow-brand-primary/20"
+                  ? "bg-brand-primary text-white font-black shadow-lg shadow-brand-primary/20"
                   : "text-text-dim hover:text-white hover:bg-white/5"
               )}
             >
@@ -140,35 +140,79 @@ export default function AuthModal({
             </button>
           </div>
 
-          {/* Clerk Auth Container */}
-          <div className="p-6 flex justify-center items-center min-h-[400px] relative">
-            <div className={cn("w-full transition-opacity duration-150", tab === 'login' ? "block opacity-100" : "hidden opacity-0")}>
+          {/* Auth Container */}
+          <div className="p-6 flex justify-center items-center min-h-[420px]">
+            {tab === 'login' ? (
               <SignIn 
                 routing="hash"
                 appearance={{
+                  layout: {
+                    unsafe_disableDevelopmentModeWarnings: true,
+                    socialButtonsPlacement: 'top',
+                    socialButtonsVariant: 'iconButton',
+                    showOptionalFields: false,
+                    logoPlacement: 'none',
+                  },
                   elements: {
                     rootBox: "w-full flex justify-center",
                     card: "bg-transparent shadow-none border-none p-0 w-full",
                     header: "hidden",
-                    footer: "border-t border-white/5 pt-3 mt-3"
+                    headerTitle: "hidden",
+                    headerSubtitle: "hidden",
+                    footer: "hidden",
+                    footerAction: "hidden",
+                    socialButtonsRoot: "flex justify-center gap-3 w-full mb-3",
+                    socialButtons: "flex justify-center gap-3 w-full",
+                    socialButtonsIconButton: "border border-white/15 bg-white/5 hover:bg-white/10 text-white rounded-2xl p-3 h-12 w-12 flex items-center justify-center transition-all shadow-md hover:scale-105",
+                    socialButtonsBlockButton: "border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-2xl transition-all",
+                    socialButtonsBlockButtonText: "hidden",
+                    formButtonPrimary: "!bg-orange-500 hover:!bg-orange-600 !text-white !opacity-100 font-black py-3.5 px-6 rounded-2xl shadow-lg !shadow-orange-500/30 uppercase tracking-wider text-xs transition-all cursor-pointer",
+                    formButtonPrimaryText: "!text-white !opacity-100 font-black uppercase tracking-wider text-xs",
+                    formFieldInput: "bg-white/5 border border-white/10 text-white rounded-xl focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-all placeholder:text-zinc-500 text-sm font-medium",
+                    formFieldLabel: "text-xs font-bold text-zinc-300 uppercase tracking-wide",
+                    dividerLine: "bg-white/10",
+                    dividerText: "text-zinc-500 text-[11px] uppercase font-bold tracking-wider",
+                    identityPreviewText: "text-white font-medium",
+                    identityPreviewEditButton: "text-orange-400 hover:text-orange-300 font-bold",
                   }
                 }}
               />
-            </div>
-
-            <div className={cn("w-full transition-opacity duration-150", tab === 'signup' ? "block opacity-100" : "hidden opacity-0")}>
+            ) : (
               <SignUp 
                 routing="hash"
                 appearance={{
+                  layout: {
+                    unsafe_disableDevelopmentModeWarnings: true,
+                    socialButtonsPlacement: 'top',
+                    socialButtonsVariant: 'iconButton',
+                    showOptionalFields: false,
+                    logoPlacement: 'none',
+                  },
                   elements: {
                     rootBox: "w-full flex justify-center",
                     card: "bg-transparent shadow-none border-none p-0 w-full",
                     header: "hidden",
-                    footer: "border-t border-white/5 pt-3 mt-3"
+                    headerTitle: "hidden",
+                    headerSubtitle: "hidden",
+                    footer: "hidden",
+                    footerAction: "hidden",
+                    socialButtonsRoot: "flex justify-center gap-3 w-full mb-3",
+                    socialButtons: "flex justify-center gap-3 w-full",
+                    socialButtonsIconButton: "border border-white/15 bg-white/5 hover:bg-white/10 text-white rounded-2xl p-3 h-12 w-12 flex items-center justify-center transition-all shadow-md hover:scale-105",
+                    socialButtonsBlockButton: "border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-2xl transition-all",
+                    socialButtonsBlockButtonText: "hidden",
+                    formButtonPrimary: "!bg-orange-500 hover:!bg-orange-600 !text-white !opacity-100 font-black py-3.5 px-6 rounded-2xl shadow-lg !shadow-orange-500/30 uppercase tracking-wider text-xs transition-all cursor-pointer",
+                    formButtonPrimaryText: "!text-white !opacity-100 font-black uppercase tracking-wider text-xs",
+                    formFieldInput: "bg-white/5 border border-white/10 text-white rounded-xl focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-all placeholder:text-zinc-500 text-sm font-medium",
+                    formFieldLabel: "text-xs font-bold text-zinc-300 uppercase tracking-wide",
+                    dividerLine: "bg-white/10",
+                    dividerText: "text-zinc-500 text-[11px] uppercase font-bold tracking-wider",
+                    identityPreviewText: "text-white font-medium",
+                    identityPreviewEditButton: "text-orange-400 hover:text-orange-300 font-bold",
                   }
                 }}
               />
-            </div>
+            )}
           </div>
         </motion.div>
       </div>

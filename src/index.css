@@ -405,3 +405,194 @@ div:fullscreen {
   background-color: #000000 !important;
   padding: 0 !important;
 }
+
+/* =========================================================================
+   Aether Authentication: Clerk Branding & Dev Mode Suppression
+   ========================================================================= */
+
+/* 1. Complete suppression of Clerk branding, watermarks, development mode badges & ribbons */
+.cl-internal-b3fm6y,
+.cl-internal-1dauvpw,
+.cl-internal-185g5e3,
+.cl-internal-ph309g,
+.cl-internal-1p7o80y,
+.cl-internal-4g2r5,
+.cl-internal-150gcvf,
+.cl-internal-1dauvpn,
+.cl-internal-17c4g0b,
+.cl-developmentModeBadge,
+.cl-devModeBanner,
+.cl-badge,
+[data-localization-key*="developmentMode"],
+[data-localization-key*="securedByClerk"],
+[data-localization-key*="developmentModeBanner"],
+.cl-footerAction,
+.cl-footer,
+.cl-brandedFooter,
+a[href*="clerk.com"],
+a[href*="clerk.dev"],
+a[aria-label*="Clerk"],
+a[aria-label*="clerk"],
+div[class*="developmentMode"],
+span[class*="developmentMode"],
+div[class*="DevelopmentMode"],
+span[class*="DevelopmentMode"],
+div[class*="cl-developmentMode"],
+div[class*="cl-badge"],
+span[class*="cl-badge"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  height: 0 !important;
+  width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: absolute !important;
+  overflow: hidden !important;
+}
+
+/* 2. Guaranteed high-visibility styling for Sign In & Submit action buttons */
+.cl-formButtonPrimary,
+button.cl-formButtonPrimary,
+.cl-formButtonPrimary[type="submit"] {
+  background: linear-gradient(135deg, #f27d26 0%, #ea580c 100%) !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  font-size: 0.8125rem !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+  padding: 0.875rem 1.5rem !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 10px 25px -5px rgba(242, 125, 38, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  opacity: 1 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.cl-formButtonPrimary:hover {
+  background: linear-gradient(135deg, #fb923c 0%, #f27d26 100%) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 12px 30px -5px rgba(242, 125, 38, 0.6) !important;
+}
+
+.cl-formButtonPrimary *,
+.cl-formButtonPrimary span,
+.cl-formButtonPrimary p,
+.cl-formButtonPrimary div,
+.cl-formButtonPrimary text {
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  opacity: 1 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* 3. Social login icon-only buttons (Logos only: Google, GitHub, Microsoft) */
+.cl-socialButtonsRoot {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  width: 100% !important;
+  margin-bottom: 0.75rem !important;
+}
+
+.cl-socialButtons {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  width: 100% !important;
+}
+
+.cl-socialButtonsIconButton,
+button.cl-socialButtonsIconButton {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 1rem !important;
+  width: 3.25rem !important;
+  height: 3.25rem !important;
+  min-width: 3.25rem !important;
+  min-height: 3.25rem !important;
+  padding: 0.625rem !important;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+}
+
+.cl-socialButtonsIconButton:hover,
+button.cl-socialButtonsIconButton:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(242, 125, 38, 0.4) !important;
+  transform: translateY(-2px) scale(1.05) !important;
+  box-shadow: 0 8px 20px rgba(242, 125, 38, 0.2) !important;
+}
+
+.cl-socialButtonsIconButton svg,
+.cl-socialButtonsIconButton img,
+.cl-socialButtonsBlockButton svg,
+.cl-socialButtonsBlockButton img {
+  width: 1.35rem !important;
+  height: 1.35rem !important;
+  max-width: 1.35rem !important;
+  max-height: 1.35rem !important;
+}
+
+/* Explicitly hide any textual label in social buttons to keep solely the provider logos */
+.cl-socialButtonsBlockButtonText,
+.cl-socialButtonsIconButtonText,
+.cl-socialButtonsBlockButton__text,
+.cl-socialButtonsIconButton__text,
+.cl-socialButtonsBlockButton span:not(:has(svg, img)),
+.cl-socialButtonsBlockButton p {
+  display: none !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.cl-socialButtonsBlockButton {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 1rem !important;
+  color: #ffffff !important;
+  padding: 0.75rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.2s ease !important;
+}
+
+.cl-socialButtonsBlockButton:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+.cl-formFieldInput {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 0.75rem !important;
+  color: #ffffff !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 0.875rem !important;
+}
+
+.cl-formFieldInput:focus {
+  border-color: #f27d26 !important;
+  box-shadow: 0 0 0 2px rgba(242, 125, 38, 0.3) !important;
+}
+
+.cl-formFieldLabel {
+  color: rgba(255, 255, 255, 0.85) !important;
+  font-size: 0.75rem !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  margin-bottom: 0.35rem !important;
+}
+
