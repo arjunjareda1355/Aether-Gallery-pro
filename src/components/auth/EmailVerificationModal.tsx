@@ -19,7 +19,7 @@ import {
   recordEmailVerifiedInFirestore 
 } from '../../services/emailVerificationService';
 import { hapticLight, hapticSuccess, hapticError, hapticMedium, hapticSparkle } from '../../utils/haptics';
-import { auth } from '../../lib/firebase';
+import { useUser } from '../../lib/clerk';
 import { cn } from '../../lib/utils';
 
 interface EmailVerificationModalProps {
@@ -39,6 +39,7 @@ export default function EmailVerificationModal({
   onVerified,
   autoDispatchOnOpen = true
 }: EmailVerificationModalProps) {
+  const { user: clerkUser } = useUser();
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +49,7 @@ export default function EmailVerificationModal({
   const [directLink, setDirectLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const activeEmail = email?.trim().toLowerCase() || auth.currentUser?.email?.toLowerCase() || '';
+  const activeEmail = email?.trim().toLowerCase() || clerkUser?.primaryEmailAddress?.emailAddress?.toLowerCase() || '';
 
   // Initial dispatch on opening
   useEffect(() => {
@@ -111,8 +112,8 @@ export default function EmailVerificationModal({
     hapticSuccess();
     hapticSparkle();
 
-    if (auth.currentUser?.uid) {
-      recordEmailVerifiedInFirestore(auth.currentUser.uid);
+    if (clerkUser?.id) {
+      recordEmailVerifiedInFirestore(clerkUser.id);
     }
 
     if (onVerified) {

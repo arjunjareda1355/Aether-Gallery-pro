@@ -6,15 +6,17 @@ import { useTranslation } from 'react-i18next';
 import Logo from '../components/layout/Logo';
 import { cn } from '../lib/utils';
 import { collection, onSnapshot, query, doc } from 'firebase/firestore';
-import { db, COLLECTIONS, auth } from '../lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { db, COLLECTIONS } from '../lib/firebase';
+import { useUser } from '../lib/clerk';
 
 export default function AboutPage() {
   const { t } = useTranslation();
   const [activeTopic, setActiveTopic] = React.useState<number | null>(null);
   const [totalPostsCount, setTotalPostsCount] = React.useState<number | null>(null);
   const [globalConfig, setGlobalConfig] = React.useState<any>(null);
-  const [isAdmin, setIsAdmin] = React.useState(false);
+  const { user: clerkUser } = useUser();
+  const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com', 'aethersanctuaryofficial@gmail.com'];
+  const isAdmin = clerkUser && ADMIN_EMAILS.some(email => clerkUser.primaryEmailAddress?.emailAddress?.toLowerCase() === email.toLowerCase());
   const [copiedEmail, setCopiedEmail] = React.useState(false);
 
   React.useEffect(() => {
@@ -27,15 +29,6 @@ export default function AboutPage() {
       console.error("Failed to query global configuration settings:", error);
     });
 
-    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      if (firebaseUser) {
-        const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com', 'aethersanctuaryofficial@gmail.com'];
-        setIsAdmin(ADMIN_EMAILS.some(email => firebaseUser.email?.toLowerCase() === email.toLowerCase()));
-      } else {
-        setIsAdmin(false);
-      }
-    });
-
     const q = query(collection(db, COLLECTIONS.IMAGES));
     const unsub = onSnapshot(q, (snapshot) => {
       setTotalPostsCount(snapshot.size);
@@ -45,7 +38,6 @@ export default function AboutPage() {
 
     return () => {
       unsubConfig();
-      unsubAuth();
       unsub();
     };
   }, []);

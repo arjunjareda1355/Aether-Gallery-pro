@@ -2,13 +2,16 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
+import { ClerkAuthProvider } from './lib/clerk';
 import './index.css';
 import './lib/i18n';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <ClerkAuthProvider>
+        <App />
+      </ClerkAuthProvider>
     </ErrorBoundary>
   </StrictMode>,
 );

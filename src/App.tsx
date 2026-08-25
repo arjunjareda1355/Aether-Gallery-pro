@@ -1,10 +1,10 @@
 import { useState, useEffect, MouseEvent, useCallback, useMemo, useTransition, useRef, useDeferredValue, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { collection, onSnapshot, query, orderBy, addDoc, deleteDoc, doc, updateDoc, increment, getDocs, limit, startAfter, QueryDocumentSnapshot, DocumentData, where, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { useInView } from 'react-intersection-observer';
-import { auth, db, googleProvider, COLLECTIONS, testFirestoreConnection, handleFirestoreError } from './lib/firebase';
+import { db, COLLECTIONS, testFirestoreConnection, handleFirestoreError } from './lib/firebase';
+import { useUser, useClerk } from './lib/clerk';
 import { Image, Category, User } from './types';
 import { cn, debounce, copyToClipboard } from './lib/utils';
 import { ArrowLeft, Trash2, Sparkles, Wand2, Search, Check, Folder, Lock, Unlock, Edit3, HelpCircle, X, Download, Share2, AlertTriangle, Upload } from 'lucide-react';
@@ -52,6 +52,8 @@ export default function App() {
 
 function AppContent() {
   const { t } = useTranslation();
+  const { user: clerkUser, isLoaded: isClerkLoaded, isSignedIn: isClerkSignedIn } = useUser();
+  const { signOut: clerkSignOut } = useClerk();
   const [images, setImages] = useState<Image[]>([]);
   const [globalConfig, setGlobalConfig] = useState<any>(null);
   const [userInterests, setUserInterests] = useState<string[]>([]);
@@ -103,7 +105,7 @@ function AppContent() {
     }
     setProfileSwitcherOpen(false);
     try {
-      await signOut(auth);
+      if (clerkSignOut) await clerkSignOut();
       switchActiveProfile(targetProfile.uid);
       setAuthInitialEmail(targetProfile.email || '');
       setAuthModalMode('login');
@@ -113,19 +115,19 @@ function AppContent() {
       console.error("Failed to switch profile context:", err);
       notify('Failed to switch profile smoothly', 'error');
     }
-  }, [user, notify]);
+  }, [user, notify, clerkSignOut]);
 
   const handleAddNewProfile = useCallback(async () => {
     setProfileSwitcherOpen(false);
     try {
-      await signOut(auth);
+      if (clerkSignOut) await clerkSignOut();
       setAuthInitialEmail('');
-      setAuthModalMode('login');
+      setAuthModalMode('signup');
       setAuthModalOpen(true);
     } catch (err) {
       console.error("Failed to prepare new profile context:", err);
     }
-  }, []);
+  }, [clerkSignOut]);
 
   // Owner Bulk Select States
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -146,8 +148,8 @@ function AppContent() {
           if (res.verified) {
             hapticSuccess();
             notify('Email identity successfully verified! Welcome to Aether Sanctuary.', 'success');
-            if (auth.currentUser?.uid) {
-              await recordEmailVerifiedInFirestore(auth.currentUser.uid);
+            if (user?.uid) {
+              await recordEmailVerifiedInFirestore(user.uid);
             }
             if (user) {
               setUser(prev => prev ? ({ ...prev, emailVerified: true }) : prev);
@@ -303,200 +305,230 @@ function AppContent() {
     // Connectivity Audit
     testFirestoreConnection();
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const isAdmin = ADMIN_EMAILS.some(email => firebaseUser.email?.toLowerCase() === email.toLowerCase());
-        console.log("Aether Protocol: Authentication confirmed for", firebaseUser.email, "Admin Status:", isAdmin);
+    if (!isClerkLoaded) return;
+
+    if (isClerkSignedIn && clerkUser) {
+      const email = clerkUser.primaryEmailAddress?.emailAddress || '';
+      const uid = clerkUser.id;
+      const displayName = clerkUser.fullName || clerkUser.username || clerkUser.firstName || clerkUser.primaryEmailAddress?.emailAddress?.split('@')[0] || null;
+      const photoURL = clerkUser.imageUrl || null;
+      const isAdmin = ADMIN_EMAILS.some(e => email.toLowerCase() === e.toLowerCase());
+      console.log("Aether Protocol: Authentication confirmed for", email, "Admin Status:", isAdmin);
+      
+      // Instantly manifest authenticated state so the UI reflects login immediately
+      const initialUser: User = {
+        uid: uid,
+        email: email,
+        isAdmin: isAdmin,
+        displayName: displayName,
+        photoURL: photoURL,
+        isPremium: isAdmin,
+        isPremiumPending: false,
+        subscriptionPlan: null,
+        bio: null,
+        location: null,
+        website: null,
+        gender: null,
+        dob: null,
+        occupation: null,
+        theme: 'orange',
+        isBanned: false,
+        isHold: false,
+        emailVerified: true
+      };
+
+      setUser(prev => {
+        if (!prev || prev.uid !== uid) {
+          return initialUser;
+        }
+        return {
+          ...initialUser,
+          ...prev,
+          displayName: prev.displayName || displayName,
+          photoURL: prev.photoURL || photoURL,
+          isAdmin: isAdmin || prev.isAdmin
+        };
+      });
+
+      // Close auth modal if open
+      setAuthModalOpen(false);
+
+      // Dynamic profile listener
+      unsubscribeProfile = onSnapshot(doc(db, COLLECTIONS.USERS, uid), (snap) => {
+        let profileData = snap.exists() ? snap.data() : null;
         
-        // Dynamic profile listener
-        unsubscribeProfile = onSnapshot(doc(db, COLLECTIONS.USERS, firebaseUser.uid), (snap) => {
-          if (!snap.exists()) {
-            console.warn("Aether Protocol: Registry not yet manifested for user", firebaseUser.uid);
-            return; // Don't update user state yet if doc doesn't exist
-          }
-          
-          const profileData = snap.data();
-          
-          if (profileData?.theme && !localStorage.getItem('aether-theme-synced')) {
-             setCurrentTheme(profileData.theme);
-             localStorage.setItem('aether-theme-synced', 'true');
-          }
-          
-          // Trigger onboarding if user is new (based on metadata or missing flag)
-          const isNewUser = (firebaseUser.metadata.creationTime === firebaseUser.metadata.lastSignInTime) || !profileData?.hasSeenOnboarding;
-          const hasSeenLocal = localStorage.getItem('aether-onboarding-complete');
-          
-          if (isNewUser && !hasSeenLocal && !showOnboarding) {
-            setShowOnboarding(true);
-          }
+        if (profileData?.theme && !localStorage.getItem('aether-theme-synced')) {
+           setCurrentTheme(profileData.theme);
+           localStorage.setItem('aether-theme-synced', 'true');
+        }
+        
+        const isNewUser = (clerkUser.createdAt ? new Date(clerkUser.createdAt).getTime() > Date.now() - 3600000 : false) || !profileData?.hasSeenOnboarding;
+        const hasSeenLocal = localStorage.getItem('aether-onboarding-complete');
+        
+        if (isNewUser && !hasSeenLocal && !showOnboarding) {
+          setShowOnboarding(true);
+        }
 
-          const resolvedUser = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            isAdmin: isAdmin || profileData?.isAdmin || false,
-            displayName: profileData?.displayName || firebaseUser.displayName || null,
-            photoURL: profileData?.photoURL || firebaseUser.photoURL || null,
-            isPremium: isAdmin || profileData?.isAdmin || profileData?.isPremium || false,
-            isPremiumPending: profileData?.isPremiumPending || false,
-            subscriptionPlan: profileData?.subscriptionPlan || null,
-            bio: profileData?.bio || null,
-            location: profileData?.location || null,
-            website: profileData?.website || null,
-            gender: profileData?.gender || null,
-            dob: profileData?.dob || null,
-            occupation: profileData?.occupation || null,
-            theme: profileData?.theme || 'orange',
-            isBanned: profileData?.isBanned || false,
-            isHold: profileData?.isHold || false,
-            emailVerified: profileData?.emailVerified || firebaseUser.emailVerified || false
-          };
-
-          setUser(resolvedUser);
-
-          // Save to local profile registry for effortless profile switching
-          recordProfileSession(resolvedUser);
-        }, (error) => {
-          console.error("Profile fetch failed:", error);
-          try {
-            handleFirestoreError(error, 'get', `${COLLECTIONS.USERS}/${firebaseUser.uid}`);
-          } catch (e) {
-            // Error already handled/logged by handleFirestoreError
-          }
-        });
-
-        // Initialize user doc if not exists
-        const initializeProfile = async () => {
-          try {
-            const userDocRef = doc(db, COLLECTIONS.USERS, firebaseUser.uid);
-            const userSnap = await getDoc(userDocRef);
-            
-            // Function to create a clean, modern readable ID from name and DOB
-            const generateReadableId = (name: string | null, dob?: string | null) => {
-              if (!name) return `user_${Math.floor(Math.random() * 10000)}`;
-              const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 15);
-              
-              let suffix = '';
-              if (dob) {
-                const date = new Date(dob);
-                if (!isNaN(date.getTime())) {
-                  suffix = `_${date.getDate()}${date.getMonth() + 1}${date.getFullYear().toString().slice(-2)}`;
-                } else {
-                  suffix = dob.replace(/[^0-9]/g, '').slice(-4);
-                }
-              } else {
-                suffix = Math.floor(1000 + Math.random() * 8999).toString();
-              }
-              
-              return `${cleanName}${suffix}`;
-            };
-
-            const userProfileData = {
-              uid: firebaseUser.uid,
-              userId: firebaseUser.uid,
-              email: firebaseUser.email || null,
-              displayName: firebaseUser.displayName || null,
-              photoURL: firebaseUser.photoURL || null,
-              lastSeen: serverTimestamp(),
-              hasSeenOnboarding: false,
-              theme: 'orange',
-              isPremium: isAdmin, // Admins get premium by default
-              isAdmin: isAdmin
-            };
-
-            if (!userSnap.exists()) {
-              console.log("Aether Protocol: New resident detected. Initializing registry for", firebaseUser.uid);
-              
-              let mergedPermissions: any = {};
-              let oldDocRefToClean: any = null;
-              
-              if (firebaseUser.email) {
-                try {
-                  const qPregrant = query(
-                    collection(db, COLLECTIONS.USERS), 
-                    where('email', '==', firebaseUser.email.toLowerCase())
-                  );
-                  const pregrantSnap = await getDocs(qPregrant);
-                  if (!pregrantSnap.empty) {
-                    const pregrantDoc = pregrantSnap.docs[0];
-                    const data = pregrantDoc.data();
-                    mergedPermissions = {
-                      isPremium: data.isPremium || false,
-                      subscriptionPlan: data.subscriptionPlan || null,
-                      isAdmin: data.isAdmin || false,
-                      isBanned: data.isBanned || false,
-                      isHold: data.isHold || false
-                    };
-                    if (pregrantDoc.id !== firebaseUser.uid) {
-                      oldDocRefToClean = pregrantDoc.ref;
-                    }
-                  }
-                } catch (pe) {
-                  console.warn("Could not query pregrant status:", pe);
-                }
-              }
-
-              const readableId = generateReadableId(firebaseUser.displayName);
-              await setDoc(userDocRef, {
-                ...userProfileData,
-                ...mergedPermissions,
-                readableId,
-                createdAt: serverTimestamp()
-              });
-
-              if (oldDocRefToClean) {
-                try {
-                  await deleteDoc(oldDocRefToClean);
-                  console.log("Aether Protocol: Placeholder pregrant profile merged & purged successfully.");
-                } catch (de) {
-                  console.warn("Could not delete pregrant placeholder:", de);
-                }
-              }
-            } else {
-              console.log("Aether Protocol: Registry found. Updating lastSeen for", firebaseUser.uid);
-              await updateDoc(userDocRef, {
-                lastSeen: serverTimestamp()
-              });
-            }
-          } catch (error) {
-            console.error("Aether Protocol: Profile initialization failed:", error);
-            handleFirestoreError(error, 'write', COLLECTIONS.USERS);
-          }
+        const resolvedUser: User = {
+          uid: uid,
+          email: email || profileData?.email || '',
+          isAdmin: isAdmin || profileData?.isAdmin || false,
+          displayName: profileData?.displayName || displayName || null,
+          photoURL: profileData?.photoURL || photoURL || null,
+          isPremium: isAdmin || profileData?.isAdmin || profileData?.isPremium || false,
+          isPremiumPending: profileData?.isPremiumPending || false,
+          subscriptionPlan: profileData?.subscriptionPlan || null,
+          bio: profileData?.bio || null,
+          location: profileData?.location || null,
+          website: profileData?.website || null,
+          gender: profileData?.gender || null,
+          dob: profileData?.dob || null,
+          occupation: profileData?.occupation || null,
+          theme: profileData?.theme || 'orange',
+          isBanned: profileData?.isBanned || false,
+          isHold: profileData?.isHold || false,
+          emailVerified: true
         };
 
-        initializeProfile();
+        setUser(resolvedUser);
 
+        // Save to local profile registry for effortless profile switching
+        recordProfileSession(resolvedUser);
+      }, (error) => {
+        console.error("Profile fetch failed:", error);
         try {
-          const qLikes = query(collection(db, COLLECTIONS.LIKES), where('userId', '==', firebaseUser.uid));
-          const likeDocs = await getDocs(qLikes);
-          setLikedImageIds(new Set(likeDocs.docs.map(d => d.data().imageId)));
-
-          const qFollows = query(collection(db, COLLECTIONS.FOLLOWS), where('followerId', '==', firebaseUser.uid));
-          const followDocs = await getDocs(qFollows);
-          setFollowingIds(new Set(followDocs.docs.map(d => d.data().followingId)));
-
-          const qCollections = query(collection(db, COLLECTIONS.COLLECTIONS), where('userId', '==', firebaseUser.uid));
-          unsubscribeCollections = onSnapshot(qCollections, (snap) => {
-            const allSavedIds = new Set<string>();
-            snap.docs.forEach(d => {
-              const ids = d.data().imageIds || [];
-              ids.forEach((id: string) => allSavedIds.add(id));
-            });
-            setSavedImageIds(allSavedIds);
-          }, (error) => {
-            handleFirestoreError(error, 'list', COLLECTIONS.COLLECTIONS);
-          });
-        } catch (error) {
-          console.error("User data fetch failed:", error);
+          handleFirestoreError(error, 'get', `${COLLECTIONS.USERS}/${uid}`);
+        } catch (e) {
         }
-      } else {
-        setUser(null);
-        setLikedImageIds(new Set());
-        setFollowingIds(new Set());
-        if (unsubscribeProfile) unsubscribeProfile();
-        if (unsubscribeCollections) unsubscribeCollections();
-      }
-    });
+      });
 
+      // Initialize user doc if not exists
+      const initializeProfile = async () => {
+        try {
+          const userDocRef = doc(db, COLLECTIONS.USERS, uid);
+          const userSnap = await getDoc(userDocRef);
+          
+          const generateReadableId = (name: string | null) => {
+            if (!name) return `user_${Math.floor(Math.random() * 10000)}`;
+            const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 15);
+            return `${cleanName}_${Math.floor(1000 + Math.random() * 8999)}`;
+          };
+
+          const userProfileData = {
+            uid: uid,
+            userId: uid,
+            email: email || null,
+            displayName: displayName || null,
+            photoURL: photoURL || null,
+            lastSeen: serverTimestamp(),
+            hasSeenOnboarding: false,
+            theme: 'orange',
+            isPremium: isAdmin,
+            isAdmin: isAdmin
+          };
+
+          if (!userSnap.exists()) {
+            console.log("Aether Protocol: New resident detected. Initializing registry for", uid);
+            
+            let mergedPermissions: any = {};
+            let oldDocRefToClean: any = null;
+            
+            if (email) {
+              try {
+                const qPregrant = query(
+                  collection(db, COLLECTIONS.USERS), 
+                  where('email', '==', email.toLowerCase())
+                );
+                const pregrantSnap = await getDocs(qPregrant);
+                if (!pregrantSnap.empty) {
+                  const pregrantDoc = pregrantSnap.docs[0];
+                  const data = pregrantDoc.data();
+                  mergedPermissions = {
+                    isPremium: data.isPremium || false,
+                    subscriptionPlan: data.subscriptionPlan || null,
+                    isAdmin: data.isAdmin || false,
+                    isBanned: data.isBanned || false,
+                    isHold: data.isHold || false
+                  };
+                  if (pregrantDoc.id !== uid) {
+                    oldDocRefToClean = pregrantDoc.ref;
+                  }
+                }
+              } catch (pe) {
+                console.warn("Could not query pregrant status:", pe);
+              }
+            }
+
+            const readableId = generateReadableId(displayName);
+            await setDoc(userDocRef, {
+              ...userProfileData,
+              ...mergedPermissions,
+              readableId,
+              createdAt: serverTimestamp()
+            });
+
+            if (oldDocRefToClean) {
+              try {
+                await deleteDoc(oldDocRefToClean);
+                console.log("Aether Protocol: Placeholder pregrant profile merged & purged successfully.");
+              } catch (de) {
+                console.warn("Could not delete pregrant placeholder:", de);
+              }
+            }
+          } else {
+            console.log("Aether Protocol: Registry found. Updating lastSeen for", uid);
+            await updateDoc(userDocRef, {
+              lastSeen: serverTimestamp()
+            });
+          }
+        } catch (error) {
+          console.error("Aether Protocol: Profile initialization failed:", error);
+          handleFirestoreError(error, 'write', COLLECTIONS.USERS);
+        }
+      };
+
+      initializeProfile();
+
+      try {
+        const qLikes = query(collection(db, COLLECTIONS.LIKES), where('userId', '==', uid));
+        getDocs(qLikes).then((likeDocs) => {
+          setLikedImageIds(new Set(likeDocs.docs.map(d => d.data().imageId)));
+        }).catch(err => console.warn("Likes fetch error:", err));
+
+        const qFollows = query(collection(db, COLLECTIONS.FOLLOWS), where('followerId', '==', uid));
+        getDocs(qFollows).then((followDocs) => {
+          setFollowingIds(new Set(followDocs.docs.map(d => d.data().followingId)));
+        }).catch(err => console.warn("Follows fetch error:", err));
+
+        const qCollections = query(collection(db, COLLECTIONS.COLLECTIONS), where('userId', '==', uid));
+        unsubscribeCollections = onSnapshot(qCollections, (snap) => {
+          const allSavedIds = new Set<string>();
+          snap.docs.forEach(d => {
+            const ids = d.data().imageIds || [];
+            ids.forEach((id: string) => allSavedIds.add(id));
+          });
+          setSavedImageIds(allSavedIds);
+        }, (error) => {
+          handleFirestoreError(error, 'list', COLLECTIONS.COLLECTIONS);
+        });
+      } catch (error) {
+        console.error("User data fetch failed:", error);
+      }
+    } else {
+      setUser(null);
+      setLikedImageIds(new Set());
+      setFollowingIds(new Set());
+      if (unsubscribeProfile) unsubscribeProfile();
+      if (unsubscribeCollections) unsubscribeCollections();
+    }
+
+    return () => {
+      if (unsubscribeProfile) unsubscribeProfile();
+      if (unsubscribeCollections) unsubscribeCollections();
+    };
+  }, [isClerkLoaded, isClerkSignedIn, clerkUser]);
+
+  useEffect(() => {
     const qCat = query(collection(db, COLLECTIONS.CATEGORIES), orderBy('name'));
     const unsubscribeCat = onSnapshot(qCat, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Category));
@@ -511,7 +543,6 @@ function AppContent() {
     });
 
     return () => {
-      unsubscribeAuth();
       unsubscribeCat();
     };
   }, []);
@@ -839,9 +870,14 @@ function AppContent() {
     openAuthModal('login');
   }, [openAuthModal]);
 
-  const handleLogout = () => {
-    signOut(auth);
-  };
+  const handleLogout = useCallback(async () => {
+    try {
+      if (clerkSignOut) await clerkSignOut();
+      notify('Disconnected successfully', 'info');
+    } catch (err) {
+      console.error("Clerk sign out error:", err);
+    }
+  }, [clerkSignOut, notify]);
 
   const cleanupDuplicates = useCallback(async () => {
     if (!user?.isAdmin) return;

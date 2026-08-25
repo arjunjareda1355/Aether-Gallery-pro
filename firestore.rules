@@ -1,29 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 0. Global Safety Net
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // -------------------------------------------------------------------------
-    // 3. SEED HELPERS (Primitive Definition)
-    // -------------------------------------------------------------------------
-    function isSignedIn() { return request.auth != null; }
-    
-    function isAdmin() {
-      return isSignedIn() && 
-             'email' in request.auth.token && 
-             request.auth.token.email.lower() in [
-               'arjunjareda2007@gmail.com',
-               'arjunjareda1355@gmail.com',
-               'aethersanctuaryofficial@gmail.com'
-             ];
-    }
-
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
-    
+    // Helper checks
     function isValidId(id) { 
       return id is string && id.size() > 0 && id.size() <= 128; 
     }
@@ -35,169 +13,70 @@ service cloud.firestore {
              data.timestamp != null;
     }
 
-    function isValidUser(data) {
-      return (data.get('uid', '') is string) &&
-             (data.get('userId', '') is string) &&
-             (data.get('email', '') == null || data.get('email', '') is string) &&
-             (data.get('displayName', '') == null || data.get('displayName', '') is string) &&
-             (data.get('photoURL', '') == null || data.get('photoURL', '') is string) &&
-             (data.get('isPremium', false) is bool) &&
-             (data.get('isAdmin', false) is bool);
-    }
-
-    function isValidComment(data) {
-      return (data.get('userId', request.auth.uid) == request.auth.uid) &&
-             data.imageId is string && isValidId(data.imageId) &&
-             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
-             (data.get('userName', '') is string) &&
-             (data.get('userPhoto', '') is string || data.get('userPhoto', null) == null) &&
-             data.timestamp != null;
-    }
-
-    function isValidReport(data) {
-      return (data.get('reporterId', request.auth.uid) == request.auth.uid) &&
-             data.imageId is string && isValidId(data.imageId) &&
-             (data.get('imageUrl', '') is string) &&
-             (data.get('reason', '') is string) &&
-             (data.get('status', 'pending') is string) &&
-             data.timestamp != null;
-    }
-
-    function isValidCollection(data) {
-      return (data.get('userId', request.auth.uid) == request.auth.uid) &&
-             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
-             data.imageIds is list && data.imageIds.size() <= 1000 &&
-             (data.get('isPublic', false) is bool) &&
-             data.timestamp != null;
-    }
-
-    function isValidUpgradeRequest(data) {
-      return (data.get('userId', request.auth.uid) == request.auth.uid) &&
-             (data.get('userEmail', '') is string) &&
-             (data.get('fullName', '') is string) &&
-             (data.get('whatsapp', '') is string) &&
-             (data.get('purpose', '') is string) &&
-             (data.get('details', '') is string) &&
-             (data.get('status', 'pending') is string) &&
-             data.timestamp != null;
-    }
-
-    function isValidPayment(data) {
-      return (data.get('userId', request.auth.uid) == request.auth.uid) &&
-             (data.get('userEmail', '') is string) &&
-             (data.get('plan', '') is string) &&
-             (data.get('screenshotUrl', '') is string) &&
-             (data.get('status', 'pending') is string) &&
-             data.timestamp != null;
-    }
-
-    function isValidFollow(data) {
-      return (data.get('followerId', request.auth.uid) == request.auth.uid) &&
-             data.followingId is string && isValidId(data.followingId) &&
-             data.timestamp != null;
-    }
-
-    function isValidUserInterests(data) {
-      return (data.get('userId', request.auth.uid) == request.auth.uid) &&
-             (data.get('interests', {}) is map) &&
-             (data.get('updatedAt', null) == null || data.get('updatedAt', null) is timestamp);
-    }
-
-    // -------------------------------------------------------------------------
-    // ENTITY RULES
-    // -------------------------------------------------------------------------
-
     // User profiles
     match /users/{userId} {
-      allow read: if true;
-      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow update: if isSignedIn() && (isAdmin() || request.auth.uid == userId);
-      allow delete: if isSignedIn() && (isAdmin() || request.auth.uid == userId);
+      allow read, write: if true;
     }
 
     // App Settings (global config, developer profile)
     match /app_settings/{docId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if true;
     }
 
     // User Interests (Recommendation engine data)
     match /user_interests/{userId} {
-      allow read, write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow read, write: if true;
     }
 
     // Categories
     match /categories/{categoryId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if true;
     }
 
     // Images Collection
     match /images/{imageId} {
-      allow read: if true;
-      allow create: if isSignedIn() && (isAdmin() || isValidImage(incoming()));
-      allow delete: if isAdmin() || (isSignedIn() && existing().get('userId', '') == request.auth.uid);
-      allow update: if (isAdmin() || (isSignedIn() && isValidImage(incoming())));
+      allow read, write: if true;
     }
 
     // Comments
     match /comments/{commentId} {
-      allow read: if true;
-      allow create: if isSignedIn() && isValidComment(incoming());
-      allow delete: if isAdmin() || (isSignedIn() && existing().get('userId', '') == request.auth.uid);
-      allow update: if isAdmin(); 
+      allow read, write: if true;
     }
 
     // User Collections
     match /user_collections/{collectionId} {
-      allow get: if resource.data.get('isPublic', false) == true || (isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin()));
-      allow list: if resource.data.get('isPublic', false) == true || (isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin()));
-      
-      allow create: if isSignedIn() && isValidCollection(incoming());
-      allow update: if isSignedIn() && (isAdmin() || (existing().get('userId', '') == request.auth.uid && isValidCollection(incoming())));
-      allow delete: if isAdmin() || (isSignedIn() && existing().get('userId', '') == request.auth.uid);
+      allow read, write: if true;
     }
 
     // Reports
     match /reports/{reportId} {
-      allow list, get: if isAdmin();
-      allow create: if isSignedIn() && isValidReport(incoming());
-      allow update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // Upgrade Requests
     match /upgrade_requests/{requestId} {
-      allow list, get: if isAdmin();
-      allow create: if isSignedIn() && isValidUpgradeRequest(incoming());
-      allow update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // Likes (relational track)
     match /likes/{likeId} {
-      allow read: if true;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow read, write: if true;
     }
 
     // Follows
     match /follows/{id} {
-      allow read: if true;
-      allow create: if isSignedIn() && isValidFollow(incoming());
-      allow delete: if isSignedIn() && (existing().followerId == request.auth.uid || existing().followingId == request.auth.uid || isAdmin());
+      allow read, write: if true;
     }
 
     // Payments
     match /payments/{paymentId} {
-      allow list: if isAdmin();
-      allow get: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isSignedIn() && isValidPayment(incoming());
-      allow update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // Connection Test
     match /_connection_test_/{docId} {
       allow read, write: if true;
     }
-
   }
 }
+

@@ -1,19 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  GoogleAuthProvider, 
-  signInWithPopup, 
-  signOut,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  sendPasswordResetEmail,
-  updateProfile,
-  sendEmailVerification,
-  applyActionCode
-} from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { 
-  getFirestore, 
   collection, 
   addDoc, 
   getDocs, 
@@ -24,12 +11,12 @@ import {
   where, 
   orderBy, 
   limit, 
-  increment,
-  onSnapshot,
-  Timestamp,
-  serverTimestamp,
-  getDocFromServer,
-  initializeFirestore
+  increment, 
+  onSnapshot, 
+  Timestamp, 
+  serverTimestamp, 
+  getDocFromServer, 
+  initializeFirestore 
 } from 'firebase/firestore';
 
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -38,40 +25,24 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore with specific database ID and optional settings
 export const db = initializeFirestore(app, {}, firebaseConfig.firestoreDatabaseId || '(default)');
+export const storage = getStorage(app);
 
 // Immersive connection test
 export async function testFirestoreConnection() {
   try {
     const testDoc = doc(db, '_connection_test_', 'ping');
-    // Ensure we can at least reach it
     await getDocFromServer(testDoc);
     console.log("Aether Sanctum: Connection resonance established.");
     return true;
   } catch (error: any) {
-    // If permission denied on health check, it's a rule issue
     if (error.code === 'permission-denied') {
       console.warn("Aether Sanctum: Connection established but rules blocks access to _connection_test_.");
-      return true; // Connection is still alive, rules are the gate
+      return true;
     }
     console.error("Aether Sanctum: Connection health check failed:", error);
     return false;
   }
 }
-
-export const auth = getAuth(app);
-export const storage = getStorage(app);
-export const googleProvider = new GoogleAuthProvider();
-
-export {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  sendPasswordResetEmail,
-  updateProfile,
-  sendEmailVerification,
-  applyActionCode,
-  signInWithPopup,
-  signOut
-};
 
 export const COLLECTIONS = {
   IMAGES: 'images',
@@ -92,13 +63,6 @@ export interface FirestoreErrorInfo {
   error: string;
   operationType: 'create' | 'update' | 'delete' | 'list' | 'get' | 'write';
   path: string | null;
-  authInfo: {
-    userId: string;
-    email: string;
-    emailVerified: boolean;
-    isAnonymous: boolean;
-    providerInfo: { providerId: string; displayName: string; email: string; }[];
-  }
 }
 
 export const handleFirestoreError = (error: any, operationType: FirestoreErrorInfo['operationType'], path: string | null = null) => {
@@ -106,18 +70,7 @@ export const handleFirestoreError = (error: any, operationType: FirestoreErrorIn
     const errorInfo: FirestoreErrorInfo = {
       error: error.message || 'Permission Denied',
       operationType,
-      path,
-      authInfo: {
-        userId: auth.currentUser?.uid || 'anonymous',
-        email: auth.currentUser?.email || '',
-        emailVerified: auth.currentUser?.emailVerified || false,
-        isAnonymous: auth.currentUser?.isAnonymous ?? true,
-        providerInfo: auth.currentUser?.providerData.map(p => ({
-          providerId: p.providerId,
-          displayName: p.displayName || '',
-          email: p.email || ''
-        })) ?? []
-      }
+      path
     };
     console.error("CRITICAL: Permission Error Detected:", JSON.stringify(errorInfo, null, 2));
     throw new Error(JSON.stringify(errorInfo));

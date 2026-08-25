@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db, COLLECTIONS, handleFirestoreError, auth } from '../lib/firebase';
+import { db, COLLECTIONS, handleFirestoreError } from '../lib/firebase';
 import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, setDoc, deleteDoc, serverTimestamp, getDoc, getDocs } from 'firebase/firestore';
-import { signOut, updateProfile } from 'firebase/auth';
+import { useClerk, useUser } from '../lib/clerk';
 import { User, Collection, Image, Follow } from '../types';
 import MasonryGrid from '../components/gallery/MasonryGrid';
 import ImageModal from '../components/gallery/ImageModal';
@@ -158,6 +158,8 @@ export default function ProfilePage({
   onLogin,
   onOpenProfileSwitcher
 }: ProfilePageProps) {
+  const { signOut: clerkSignOut } = useClerk();
+  const { user: clerkUser } = useUser();
   const { profileId } = useParams();
   const targetId = profileId || authUser?.uid;
   const isOwnProfile = authUser?.uid === targetId;
@@ -701,18 +703,9 @@ export default function ProfilePage({
       await deleteDoc(doc(db, COLLECTIONS.USERS, targetId));
       
       if (isOwnProfile) {
-        // Attempt to delete auth credential if current user
-        try {
-          if (auth.currentUser && auth.currentUser.uid === targetId) {
-            await auth.currentUser.delete().catch((authErr) => {
-              console.warn("Auth user deletion skipped/requires recent reauth, signing out instead:", authErr?.message || authErr);
-            });
-          }
-        } catch (authException) {
-          console.warn("Auth delete note:", authException);
+        if (clerkSignOut) {
+          await clerkSignOut();
         }
-
-        await signOut(auth);
         window.location.href = '/';
       } else {
         setShowDeleteConfirm(false);
@@ -775,15 +768,14 @@ export default function ProfilePage({
 
       await updateDoc(doc(db, COLLECTIONS.USERS, targetId), cleanData);
 
-      // Sync with Firebase Auth user profile if current logged-in user
-      if (auth.currentUser && auth.currentUser.uid === targetId) {
+      // Sync with Clerk user profile if current logged-in user
+      if (clerkUser && clerkUser.id === targetId && cleanData.displayName) {
         try {
-          await updateProfile(auth.currentUser, {
-            displayName: cleanData.displayName || auth.currentUser.displayName,
-            photoURL: cleanData.photoURL || auth.currentUser.photoURL
+          await clerkUser.update({
+            firstName: cleanData.displayName
           });
         } catch (authErr) {
-          console.warn("Auth user profile sync note:", authErr);
+          console.warn("Clerk user profile sync note:", authErr);
         }
       }
 

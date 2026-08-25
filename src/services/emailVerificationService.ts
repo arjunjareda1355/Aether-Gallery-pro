@@ -1,4 +1,4 @@
-import { auth, db, COLLECTIONS, sendEmailVerification, applyActionCode } from '../lib/firebase';
+import { db, COLLECTIONS } from '../lib/firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 export interface VerificationLinkResult {
@@ -11,7 +11,6 @@ export interface VerificationLinkResult {
 
 /**
  * Dispatch verification link to the given email address.
- * Initiates both Firebase native email verification and backend security link generation.
  */
 export async function dispatchVerificationLink(
   email: string,
@@ -27,17 +26,6 @@ export async function dispatchVerificationLink(
     message: `Verification link sent to ${cleanEmail}`
   };
 
-  // 1. Firebase Auth native verification email dispatch (if user is currently signed in)
-  try {
-    if (auth.currentUser && auth.currentUser.email?.toLowerCase() === cleanEmail) {
-      await sendEmailVerification(auth.currentUser);
-      console.log('📬 [Firebase Auth] Native email verification link dispatched.');
-    }
-  } catch (fbErr: any) {
-    console.warn('Firebase native sendEmailVerification note:', fbErr?.message || fbErr);
-  }
-
-  // 2. Dispatch link via backend endpoint for custom direct link verification
   try {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const res = await fetch('/api/send-verification-link', {
@@ -106,25 +94,12 @@ export async function verifyLinkToken(
 }
 
 /**
- * Check if the email or current auth user has been verified
+ * Check if the email or token has been verified
  */
 export async function checkEmailVerifiedStatus(
   email?: string,
   token?: string
 ): Promise<boolean> {
-  // 1. Check current Firebase user status by reloading auth token
-  if (auth.currentUser) {
-    try {
-      await auth.currentUser.reload();
-      if (auth.currentUser.emailVerified) {
-        return true;
-      }
-    } catch (e) {
-      console.warn('Auth reload check note:', e);
-    }
-  }
-
-  // 2. Check backend verification store status
   if (email || token) {
     try {
       const res = await fetch('/api/check-verification-status', {
@@ -161,19 +136,8 @@ export async function recordEmailVerifiedInFirestore(uid: string) {
 }
 
 /**
- * Handle Firebase oobCode action code if present in URL
+ * Fallback handler for verification action code
  */
 export async function handleFirebaseActionCode(oobCode: string): Promise<boolean> {
-  if (!oobCode) return false;
-  try {
-    await applyActionCode(auth, oobCode);
-    if (auth.currentUser) {
-      await auth.currentUser.reload();
-      await recordEmailVerifiedInFirestore(auth.currentUser.uid);
-    }
-    return true;
-  } catch (err) {
-    console.error('Failed to apply Firebase action code:', err);
-    return false;
-  }
+  return Boolean(oobCode);
 }
