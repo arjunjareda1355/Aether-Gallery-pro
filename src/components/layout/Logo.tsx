@@ -31,47 +31,55 @@ export default function Logo({ className, size = 'md' }: LogoProps) {
   }, []);
 
   const sizeClasses = {
-    xs: 'w-7 h-7 rounded-xl text-[12px]',
-    sm: 'w-9 h-9 rounded-xl text-[14px]',
-    md: 'w-11 h-11 rounded-2xl text-[17px]',
-    lg: 'w-16 h-16 rounded-2xl text-[26px]',
-    xl: 'w-22 h-22 rounded-[28px] text-[38px]'
+    xs: 'w-9 h-9 md:w-10 md:h-10 rounded-full text-[14px]',
+    sm: 'w-10 h-10 md:w-11 md:h-11 rounded-full text-[15px]',
+    md: 'w-12 h-12 md:w-14 md:h-14 rounded-full text-[18px]',
+    lg: 'w-16 h-16 md:w-20 md:h-20 rounded-full text-[26px]',
+    xl: 'w-22 h-22 md:w-24 md:h-24 rounded-full text-[38px]'
   };
 
   return (
     <div className={cn("relative inline-flex items-center justify-center group select-none shrink-0", className)}>
       {/* Subtle Warm Ambient Glow */}
-      <div className="absolute inset-0 bg-brand-primary/25 blur-md rounded-2xl opacity-40 group-hover:opacity-80 group-hover:blur-lg transition-all duration-500 scale-95 group-hover:scale-105 pointer-events-none" />
+      <div className="absolute inset-0 bg-brand-primary/25 blur-md rounded-full opacity-40 group-hover:opacity-80 group-hover:blur-lg transition-all duration-500 scale-95 group-hover:scale-105 pointer-events-none" />
 
-      {/* Main Logo Container */}
+      {/* Main Circular Logo Container */}
       <motion.div
-        whileHover={{ scale: 1.04 }}
-        whileTap={{ scale: 0.96 }}
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
         transition={{ type: 'spring', stiffness: 400, damping: 25 }}
         className={cn(
-          "relative flex items-center justify-center overflow-hidden border border-white/15 bg-gradient-to-b from-white/[0.09] via-card-dark to-black/60 shadow-[0_4px_20px_rgba(0,0,0,0.6)] backdrop-blur-md transition-colors duration-300 group-hover:border-brand-primary/50 group-hover:shadow-[0_0_24px_rgba(242,125,38,0.25)]",
+          "relative flex items-center justify-center overflow-hidden rounded-full border border-white/20 bg-gradient-to-b from-white/[0.12] via-card-dark to-black/80 shadow-[0_4px_20px_rgba(0,0,0,0.6)] backdrop-blur-md transition-all duration-300 group-hover:border-brand-primary/60 group-hover:shadow-[0_0_24px_rgba(242,125,38,0.3)]",
           sizeClasses[size]
         )}
       >
         {/* Subtle Diagonal Sheen Highlight */}
-        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.04] to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/[0.06] to-transparent pointer-events-none rounded-full" />
 
-        {/* Central Emblem / Glyph / Image */}
+        {/* Central Circular Image Emblem */}
         {logoConfig.logoIconUrl ? (
           <img 
             src={logoConfig.logoIconUrl} 
             alt="Logo" 
             referrerPolicy="no-referrer"
-            className="w-full h-full object-contain p-1.5 rounded-xl" 
+            className="w-full h-full object-cover rounded-full" 
           />
         ) : (
-          <span className="font-display font-black tracking-tighter bg-gradient-to-b from-white via-amber-100 to-brand-primary bg-clip-text text-transparent drop-shadow-sm transform -translate-y-[0.5px]">
-            {logoConfig.logoText || 'Æ'}
-          </span>
+          <img 
+            src="https://i.postimg.cc/8P2zP9z8/aether-logo.png" 
+            alt="Aether Logo" 
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
+            className="w-full h-full object-cover rounded-full" 
+          />
         )}
 
-        {/* Crisp Corner Accent */}
-        <div className="absolute top-1 right-1 w-1 h-1 rounded-full bg-brand-primary/40 group-hover:bg-brand-primary transition-colors duration-300" />
+        {/* Fallback Glyph if image is not visible */}
+        <span className="font-display font-black tracking-tighter bg-gradient-to-b from-white via-amber-100 to-brand-primary bg-clip-text text-transparent drop-shadow-sm transform -translate-y-[0.5px] pointer-events-none hidden only:inline-block">
+          {logoConfig.logoText || 'Æ'}
+        </span>
       </motion.div>
     </div>
   );

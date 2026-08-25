@@ -9,6 +9,7 @@ export interface SavedProfile {
   isPremium?: boolean;
   theme?: string;
   lastActive: number;
+  sessionId?: string | null;
 }
 
 const STORAGE_KEY = 'aether_saved_profiles';
@@ -32,12 +33,14 @@ export function getSavedProfiles(): SavedProfile[] {
 /**
  * Saves or updates current active profile in the saved profiles register
  */
-export function recordProfileSession(user: User): SavedProfile[] {
+export function recordProfileSession(user: User, sessionId?: string | null): SavedProfile[] {
   try {
     if (!user || !user.uid) return getSavedProfiles();
 
     const currentProfiles = getSavedProfiles();
-    const existingIndex = currentProfiles.findIndex(p => p.uid === user.uid || (user.email && p.email?.toLowerCase() === user.email.toLowerCase()));
+    const existingIndex = currentProfiles.findIndex(p => 
+      p.uid === user.uid || (user.email && p.email?.toLowerCase() === user.email.toLowerCase())
+    );
 
     const updatedEntry: SavedProfile = {
       uid: user.uid,
@@ -47,7 +50,8 @@ export function recordProfileSession(user: User): SavedProfile[] {
       isAdmin: user.isAdmin || false,
       isPremium: user.isPremium || false,
       theme: user.theme || 'orange',
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      sessionId: sessionId || currentProfiles[existingIndex]?.sessionId || null
     };
 
     let updatedList: SavedProfile[];
@@ -58,8 +62,8 @@ export function recordProfileSession(user: User): SavedProfile[] {
       updatedList = [updatedEntry, ...currentProfiles];
     }
 
-    // Limit to max 10 saved profiles
-    updatedList = updatedList.slice(0, 10);
+    // Limit to max 12 saved profiles
+    updatedList = updatedList.slice(0, 12);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
     localStorage.setItem(ACTIVE_PROFILE_KEY, user.uid);
     return updatedList;
@@ -92,5 +96,17 @@ export function removeSavedProfile(uid: string): SavedProfile[] {
   } catch (e) {
     console.warn('Failed to remove saved profile:', e);
     return getSavedProfiles();
+  }
+}
+
+/**
+ * Clears all saved profiles from storage
+ */
+export function clearAllSavedProfiles(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_PROFILE_KEY);
+  } catch (e) {
+    console.warn('Failed to clear saved profiles:', e);
   }
 }

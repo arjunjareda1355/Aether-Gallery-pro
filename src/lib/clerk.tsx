@@ -139,7 +139,9 @@ export function ClerkAuthProvider({ children }: ClerkAuthProviderProps) {
 export { 
   useUser, 
   useClerk, 
-  useAuth, 
+  useAuth,
+  useSession,
+  useSessionList,
   SignInButton, 
   SignUpButton, 
   UserButton, 

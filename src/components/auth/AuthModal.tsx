@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Sparkles, UserPlus, LogIn, ShieldCheck } from 'lucide-react';
 import { SignIn, SignUp, useUser } from '../../lib/clerk';
@@ -25,22 +25,33 @@ export default function AuthModal({
   const { t } = useTranslation();
   const [tab, setTab] = useState<'login' | 'signup'>(initialMode === 'signup' ? 'signup' : 'login');
   const { isSignedIn, user } = useUser();
+  const notifiedRef = useRef(false);
+  const onSuccessRef = useRef(onSuccess);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     if (isOpen) {
       setTab(initialMode === 'signup' ? 'signup' : 'login');
+      notifiedRef.current = false;
     }
   }, [isOpen, initialMode]);
 
   useEffect(() => {
-    if (isOpen && isSignedIn && user) {
-      onSuccess?.(`Welcome back, ${user.firstName || user.username || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Resident'}`);
+    if (isOpen && isSignedIn && user && !notifiedRef.current) {
+      notifiedRef.current = true;
+      const name = user.firstName || user.username || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'Resident';
+      onSuccessRef.current?.(`Welcome back, ${name}`);
       const timer = setTimeout(() => {
-        onClose();
+        onCloseRef.current();
       }, 400);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, isSignedIn, user, onClose, onSuccess]);
+  }, [isOpen, isSignedIn, user]);
 
   if (!isOpen) return null;
 
@@ -144,7 +155,9 @@ export default function AuthModal({
           <div className="p-6 flex justify-center items-center min-h-[420px]">
             {tab === 'login' ? (
               <SignIn 
-                routing="hash"
+                routing="virtual"
+                initialValues={initialEmail ? { emailAddress: initialEmail } : undefined}
+                fallbackRedirectUrl={typeof window !== 'undefined' ? window.location.href : '/'}
                 appearance={{
                   layout: {
                     unsafe_disableDevelopmentModeWarnings: true,
@@ -179,7 +192,9 @@ export default function AuthModal({
               />
             ) : (
               <SignUp 
-                routing="hash"
+                routing="virtual"
+                initialValues={initialEmail ? { emailAddress: initialEmail } : undefined}
+                fallbackRedirectUrl={typeof window !== 'undefined' ? window.location.href : '/'}
                 appearance={{
                   layout: {
                     unsafe_disableDevelopmentModeWarnings: true,

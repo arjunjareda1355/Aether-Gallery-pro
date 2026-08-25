@@ -26,7 +26,12 @@ import AuthModal, { AuthMode } from './components/auth/AuthModal';
 import SelectionToolbar from './components/gallery/SelectionToolbar';
 import ProfileSwitcherModal from './components/auth/ProfileSwitcherModal';
 import PwaInstallPrompt from './components/ui/PwaInstallPrompt';
-import { recordProfileSession, switchActiveProfile, SavedProfile } from './services/profileManager';
+import { 
+  recordProfileSession, 
+  switchActiveProfile, 
+  clearAllSavedProfiles, 
+  SavedProfile 
+} from './services/profileManager';
 
 const AboutPage = lazy(() => import('./pages/AboutPage'));
 const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
@@ -53,7 +58,8 @@ export default function App() {
 function AppContent() {
   const { t } = useTranslation();
   const { user: clerkUser, isLoaded: isClerkLoaded, isSignedIn: isClerkSignedIn } = useUser();
-  const { signOut: clerkSignOut } = useClerk();
+  const clerk = useClerk();
+  const clerkSignOut = clerk.signOut;
   const [images, setImages] = useState<Image[]>([]);
   const [globalConfig, setGlobalConfig] = useState<any>(null);
   const [userInterests, setUserInterests] = useState<string[]>([]);
@@ -98,36 +104,79 @@ function AppContent() {
     setProfileSwitcherOpen(true);
   }, []);
 
-  const handleSwitchToProfile = useCallback(async (targetProfile: SavedProfile) => {
+  const handleSwitchToProfile = useCallback(async (targetProfile: SavedProfile, sessionId?: string | null) => {
     if (user && user.uid === targetProfile.uid) {
       setProfileSwitcherOpen(false);
       return;
     }
-    setProfileSwitcherOpen(false);
-    try {
-      if (clerkSignOut) await clerkSignOut();
-      switchActiveProfile(targetProfile.uid);
-      setAuthInitialEmail(targetProfile.email || '');
-      setAuthModalMode('login');
-      setAuthModalOpen(true);
-      notify(`Switching context to ${targetProfile.displayName || targetProfile.email || 'Resident'}`, 'info');
-    } catch (err) {
-      console.error("Failed to switch profile context:", err);
-      notify('Failed to switch profile smoothly', 'error');
+    
+    // 1. Direct Clerk Multi-Session Switch if session is active
+    let targetSessionId = sessionId || targetProfile.sessionId;
+    if (!targetSessionId && clerk?.client?.sessions) {
+      const match = clerk.client.sessions.find(
+        s => s.user?.id === targetProfile.uid || 
+             (targetProfile.email && s.user?.primaryEmailAddress?.emailAddress?.toLowerCase() === targetProfile.email.toLowerCase())
+      );
+      if (match) {
+        targetSessionId = match.id;
+      }
     }
-  }, [user, notify, clerkSignOut]);
 
-  const handleAddNewProfile = useCallback(async () => {
-    setProfileSwitcherOpen(false);
-    try {
-      if (clerkSignOut) await clerkSignOut();
-      setAuthInitialEmail('');
-      setAuthModalMode('signup');
-      setAuthModalOpen(true);
-    } catch (err) {
-      console.error("Failed to prepare new profile context:", err);
+    if (targetSessionId && clerk?.setActive) {
+      try {
+        await clerk.setActive({ session: targetSessionId });
+        switchActiveProfile(targetProfile.uid);
+        setProfileSwitcherOpen(false);
+        notify(`Switched active profile to ${targetProfile.displayName || targetProfile.email || 'Curator'}`, 'success');
+        return;
+      } catch (err) {
+        console.warn("Clerk session switch fallback:", err);
+      }
     }
-  }, [clerkSignOut]);
+
+    // 2. Saved Profile Fallback: Open Auth modal pre-filled for this user
+    setProfileSwitcherOpen(false);
+    switchActiveProfile(targetProfile.uid);
+    setAuthInitialEmail(targetProfile.email || '');
+    setAuthModalMode('login');
+    setAuthModalOpen(true);
+    notify(`Sign in to activate ${targetProfile.displayName || targetProfile.email || 'Sanctuary Profile'}`, 'info');
+  }, [user, notify, clerk]);
+
+  const handleAddNewProfile = useCallback(() => {
+    setProfileSwitcherOpen(false);
+    setAuthInitialEmail('');
+    setAuthModalMode('login');
+    setAuthModalOpen(true);
+  }, []);
+
+  const handleLogoutAll = useCallback(async () => {
+    try {
+      if (clerkSignOut) {
+        await clerkSignOut();
+      }
+      clearAllSavedProfiles();
+      setUser(null);
+      setProfileSwitcherOpen(false);
+      notify('All curator sessions disconnected', 'info');
+    } catch (err) {
+      console.error("Failed to sign out of all sessions:", err);
+      notify('Error disconnecting sessions', 'error');
+    }
+  }, [clerkSignOut, notify]);
+
+  const handleLogoutCurrent = useCallback(async () => {
+    try {
+      if (clerkSignOut) {
+        await clerkSignOut();
+      }
+      setUser(null);
+      setProfileSwitcherOpen(false);
+      notify('Signed out successfully', 'info');
+    } catch (err) {
+      console.error("Failed to sign out:", err);
+    }
+  }, [clerkSignOut, notify]);
 
   // Owner Bulk Select States
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -393,7 +442,7 @@ function AppContent() {
         setUser(resolvedUser);
 
         // Save to local profile registry for effortless profile switching
-        recordProfileSession(resolvedUser);
+        recordProfileSession(resolvedUser, clerk.session?.id);
       }, (error) => {
         console.error("Profile fetch failed:", error);
         try {
@@ -2000,6 +2049,8 @@ function AppContent() {
           currentUser={user}
           onSwitchToProfile={handleSwitchToProfile}
           onAddNewProfile={handleAddNewProfile}
+          onLogoutAll={handleLogoutAll}
+          onLogoutCurrent={handleLogoutCurrent}
         />
 
         <PwaInstallPrompt
