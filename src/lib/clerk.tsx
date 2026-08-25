@@ -32,24 +32,26 @@ export function ClerkAuthProvider({ children }: ClerkAuthProviderProps) {
   return (
     <BaseClerkProvider 
       publishableKey={CLERK_PUBLISHABLE_KEY}
+      telemetry={false}
       appearance={{
         baseTheme: dark,
         variables: {
           colorPrimary: '#f97316',
-          colorBackground: '#0a0a0c',
-          colorInputBackground: '#141419',
+          colorBackground: '#0e0e12',
+          colorInputBackground: '#18181f',
           colorInputText: '#ffffff',
           colorText: '#ffffff',
-          colorTextSecondary: '#9ca3af',
-          borderRadius: '1rem',
+          colorTextSecondary: '#a1a1aa',
+          borderRadius: '0.875rem',
+          fontFamily: 'inherit',
         },
         elements: {
-          card: 'bg-card-dark border border-white/10 shadow-2xl rounded-3xl',
-          formButtonPrimary: 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold py-3 rounded-2xl shadow-lg transition-all',
-          socialButtonsBlockButton: 'border border-white/10 hover:bg-white/5 text-white rounded-2xl transition-all',
+          card: 'bg-card-dark border border-white/10 shadow-2xl rounded-3xl backdrop-blur-xl',
+          formButtonPrimary: 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold py-2.5 rounded-xl shadow-lg transition-all active:scale-[0.98]',
+          socialButtonsBlockButton: 'border border-white/10 hover:bg-white/10 text-white rounded-xl transition-all active:scale-[0.98]',
           formFieldInput: 'bg-white/5 border border-white/10 text-white rounded-xl focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-all',
           footerActionLink: 'text-orange-400 hover:text-orange-300 font-semibold',
-          headerTitle: 'font-black tracking-tight text-white',
+          headerTitle: 'font-black tracking-tight text-white text-lg',
           headerSubtitle: 'text-text-dim text-xs',
         }
       }}

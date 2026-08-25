@@ -141,20 +141,22 @@ export default function AuthModal({
           </div>
 
           {/* Clerk Auth Container */}
-          <div className="p-6 flex justify-center items-center min-h-[420px]">
-            {tab === 'login' ? (
+          <div className="p-6 flex justify-center items-center min-h-[400px] relative">
+            <div className={cn("w-full transition-opacity duration-150", tab === 'login' ? "block opacity-100" : "hidden opacity-0")}>
               <SignIn 
                 routing="hash"
                 appearance={{
                   elements: {
                     rootBox: "w-full flex justify-center",
                     card: "bg-transparent shadow-none border-none p-0 w-full",
-                    header: "hidden", // We already have our custom styled header
-                    footer: "border-t border-white/5 pt-4 mt-4"
+                    header: "hidden",
+                    footer: "border-t border-white/5 pt-3 mt-3"
                   }
                 }}
               />
-            ) : (
+            </div>
+
+            <div className={cn("w-full transition-opacity duration-150", tab === 'signup' ? "block opacity-100" : "hidden opacity-0")}>
               <SignUp 
                 routing="hash"
                 appearance={{
@@ -162,11 +164,11 @@ export default function AuthModal({
                     rootBox: "w-full flex justify-center",
                     card: "bg-transparent shadow-none border-none p-0 w-full",
                     header: "hidden",
-                    footer: "border-t border-white/5 pt-4 mt-4"
+                    footer: "border-t border-white/5 pt-3 mt-3"
                   }
                 }}
               />
-            )}
+            </div>
           </div>
         </motion.div>
       </div>
