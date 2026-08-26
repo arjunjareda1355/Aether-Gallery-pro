@@ -1,14 +1,14 @@
-import { Search, Menu, User, PlusCircle, LogOut, X, Shield, Info, UserCircle, Sparkles, Download, Palette, Filter, ChevronDown, Activity, Globe, Users } from 'lucide-react';
-import React, { useState, useRef, useEffect } from 'react';
+import { Search, Menu, User, PlusCircle, LogOut, X, Shield, Info, UserCircle, Sparkles, Download, Palette, Filter, ChevronDown, Activity, Globe, Users, SlidersHorizontal } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { cn, useBodyScrollLock } from '../../lib/utils';
-import { User as UserType, Category } from '../../types';
+import { User as UserType, Category, Image } from '../../types';
 import Logo from './Logo';
 import ThemeSelector from './ThemeSelector';
 import LanguageSelector from './LanguageSelector';
-import CategoryMenu from '../gallery/CategoryMenu';
+import FilterModal from '../gallery/FilterModal';
 import { useClickOutside } from '../../lib/useClickOutside';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../lib/firebase';
@@ -36,6 +36,12 @@ interface NavbarProps {
   onAspectRatioChange: (ratio: 'all' | 'portrait' | 'landscape' | 'square' | 'ultrawide') => void;
   currentTheme: string;
   onThemeChange: (themeId: string) => void;
+  onShuffleFeed?: () => void;
+  minLikesFilter?: number;
+  onMinLikesSelect?: (likes: number) => void;
+  onSelectTag?: (tag: string) => void;
+  availableImages?: Image[];
+  totalFilteredCount?: number;
 }
 
 export default React.memo(function Navbar({ 
@@ -58,7 +64,13 @@ export default React.memo(function Navbar({
   aspectRatioFilter,
   onAspectRatioChange,
   currentTheme,
-  onThemeChange
+  onThemeChange,
+  onShuffleFeed,
+  minLikesFilter = 0,
+  onMinLikesSelect,
+  onSelectTag,
+  availableImages = [],
+  totalFilteredCount
 }: NavbarProps) {
   const [branding, setBranding] = useState({
     logoLink: '/',
@@ -82,6 +94,15 @@ export default React.memo(function Navbar({
     return () => unsub();
   }, []);
 
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (activeCategory !== 'all') count++;
+    if (sortOrder !== 'random') count++;
+    if (mediaType !== 'all') count++;
+    if (aspectRatioFilter !== 'all') count++;
+    if (minLikesFilter && minLikesFilter > 0) count++;
+    return count;
+  }, [activeCategory, sortOrder, mediaType, aspectRatioFilter, minLikesFilter]);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -274,16 +295,22 @@ export default React.memo(function Navbar({
         <div className="flex items-center gap-2 md:gap-3 ml-auto shrink-0">
           {/* FILTER BUTTON */}
           <button 
+            type="button"
             onClick={() => setFiltersOpen(!filtersOpen)}
             className={cn(
-              "w-10 h-10 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all duration-500 relative group",
-              filtersOpen 
-                ? "bg-brand-primary text-bg-dark shadow-[0_0_30px_rgba(var(--brand-primary-rgb),0.4)] scale-110" 
-                : "bg-white/[0.04] border border-white/[0.05] text-text-dim/40 hover:text-brand-primary hover:bg-brand-primary/5 hover:border-brand-primary/30"
+              "w-10 h-10 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all duration-300 relative group cursor-pointer",
+              filtersOpen || activeFiltersCount > 0
+                ? "bg-brand-primary text-bg-dark shadow-[0_0_30px_rgba(var(--brand-primary-rgb),0.4)] scale-105" 
+                : "bg-white/[0.04] border border-white/[0.05] text-text-dim/60 hover:text-brand-primary hover:bg-brand-primary/5 hover:border-brand-primary/30"
             )}
-            title={t('common.explore')}
+            title="Open Filter & Discovery Studio"
           >
-            <Filter className="w-4.5 h-4.5 md:w-5 md:h-5" />
+            <SlidersHorizontal className="w-4 h-4 md:w-4.5 md:h-4.5" />
+            {activeFiltersCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-brand-primary text-bg-dark text-[9px] font-black flex items-center justify-center ring-2 ring-bg-dark shadow-sm">
+                {activeFiltersCount}
+              </span>
+            )}
           </button>
 
           {/* PROFILE ICON */}
@@ -409,43 +436,27 @@ export default React.memo(function Navbar({
         </div>
       </nav>
 
-      {/* FILTER DRAWER / OVERLAY */}
-      <AnimatePresence>
-        {filtersOpen && (
-          <div className="fixed inset-0 z-[100]">
-            <motion.div
-              key="filter-overlay-bg"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-bg-dark/60 backdrop-blur-md"
-              onClick={() => setFiltersOpen(false)}
-            />
-            <motion.div
-              ref={filterMenuRef}
-              initial={{ y: -20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -20, opacity: 0 }}
-              className="relative top-[80px] md:top-[88px] left-1/2 -translate-x-1/2 w-full max-w-4xl px-4 pointer-events-none"
-            >
-              <div className="bg-card-dark/95 backdrop-blur-3xl border border-white/5 rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,0.8)] p-6 pointer-events-auto">
-                <CategoryMenu 
-                  categories={categories}
-                  activeCategoryId={activeCategory}
-                  onCategorySelect={(id) => { onCategoryChange(id); setFiltersOpen(false); }}
-                  sortOrder={sortOrder}
-                  onSortSelect={(ord) => { onSortChange(ord); }}
-                  mediaType={mediaType}
-                  onMediaTypeSelect={(type) => { onMediaTypeChange(type); }}
-                  aspectRatioFilter={aspectRatioFilter}
-                  onAspectRatioSelect={(ratio) => { onAspectRatioChange(ratio); }}
-                  isLoggedIn={!!user}
-                />
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* FILTER STUDIO MODAL */}
+      <FilterModal
+        isOpen={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        categories={categories}
+        activeCategory={activeCategory}
+        onCategorySelect={onCategoryChange}
+        sortOrder={sortOrder}
+        onSortSelect={onSortChange}
+        mediaType={mediaType}
+        onMediaTypeSelect={onMediaTypeChange}
+        aspectRatioFilter={aspectRatioFilter}
+        onAspectRatioSelect={onAspectRatioChange}
+        minLikesFilter={minLikesFilter}
+        onMinLikesSelect={onMinLikesSelect}
+        onShuffleFeed={onShuffleFeed}
+        onSelectTag={onSelectTag}
+        availableImages={availableImages}
+        isLoggedIn={!!user}
+        totalFilteredCount={totalFilteredCount}
+      />
 
 
       <ThemeSelector 

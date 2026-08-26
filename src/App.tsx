@@ -16,6 +16,7 @@ import Logo from './components/layout/Logo';
 import SmartOnboarding from './components/layout/SmartOnboarding';
 import MasonryGrid from './components/gallery/MasonryGrid';
 import CategoryMenu from './components/gallery/CategoryMenu';
+import FilterModal from './components/gallery/FilterModal';
 import ImageModal from './components/gallery/ImageModal';
 import UploadForm from './components/admin/UploadForm';
 import CategoryManager from './components/admin/CategoryManager';
@@ -77,6 +78,8 @@ function AppContent() {
   const [aspectRatioFilter, setAspectRatioFilter] = useState<'all' | 'portrait' | 'landscape' | 'square' | 'ultrawide'>('all');
   const [sortOrder, setSortOrder] = useState<'random' | 'latest' | 'popular' | 'oldest' | 'trending'>('random');
   const [mediaType, setMediaType] = useState<'all' | 'image' | 'video'>('all');
+  const [minLikesFilter, setMinLikesFilter] = useState<number>(0);
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [selectedImage, setSelectedImage] = useState<Image | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -1463,6 +1466,25 @@ function AppContent() {
     }
   };
 
+  const handleShuffleFeed = useCallback(() => {
+    setImages(prev => {
+      const arr = [...prev];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    });
+    setSortOrder('random');
+    notify("Sanctuary frequency randomized ✨", "info");
+  }, [notify]);
+
+  const handleSelectTag = useCallback((tag: string) => {
+    setSearchQuery(tag);
+    setActiveCategory('all');
+    setFilterModalOpen(false);
+  }, []);
+
   useEffect(() => {
     if (user) {
       getUserInterests(user.uid).then(setUserInterests);
@@ -1503,6 +1525,11 @@ function AppContent() {
                                    /portrait|vertical|reel|tiktok|9-16|9_16|9x16/i.test(img.url);
         const imgRatio = isInferredPortrait ? 'portrait' : (img.aspectRatio || 'landscape');
         if (imgRatio !== aspectRatioFilter) return false;
+      }
+
+      // Minimum Likes Filter
+      if (minLikesFilter > 0) {
+        if ((img.likes || 0) < minLikesFilter) return false;
       }
 
       if (!q) return true;
@@ -1569,7 +1596,7 @@ function AppContent() {
       seen.add(img.id);
       return true;
     });
-  }, [deferredSearchQuery, images, commentMatches, aspectRatioFilter, categories]);
+  }, [deferredSearchQuery, images, commentMatches, aspectRatioFilter, minLikesFilter, categories]);
 
   // PWA Install Prompt Logic
   useEffect(() => {
@@ -1733,8 +1760,36 @@ function AppContent() {
           onAspectRatioChange={setAspectRatioFilter}
           currentTheme={currentTheme}
           onThemeChange={handleThemeChange}
+          onShuffleFeed={handleShuffleFeed}
+          minLikesFilter={minLikesFilter}
+          onMinLikesSelect={setMinLikesFilter}
+          onSelectTag={handleSelectTag}
+          availableImages={images}
+          totalFilteredCount={filteredImages.length}
         />
       )}
+
+      {/* GLOBAL FILTER STUDIO MODAL */}
+      <FilterModal
+        isOpen={filterModalOpen}
+        onClose={() => setFilterModalOpen(false)}
+        categories={categories}
+        activeCategory={activeCategory}
+        onCategorySelect={setActiveCategory}
+        sortOrder={sortOrder}
+        onSortSelect={setSortOrder}
+        mediaType={mediaType}
+        onMediaTypeSelect={setMediaType}
+        aspectRatioFilter={aspectRatioFilter}
+        onAspectRatioSelect={setAspectRatioFilter}
+        minLikesFilter={minLikesFilter}
+        onMinLikesSelect={setMinLikesFilter}
+        onShuffleFeed={handleShuffleFeed}
+        onSelectTag={handleSelectTag}
+        availableImages={images}
+        isLoggedIn={!!effectiveUser}
+        totalFilteredCount={filteredImages.length}
+      />
 
       <AnimatePresence>
         {showOnboarding && (
@@ -1802,6 +1857,24 @@ function AppContent() {
             >
               
               <main className="pb-20">
+                {/* Clean In-Feed Navigation & Fast Filter Strip */}
+                <div className="px-4 md:px-10 mb-4 max-w-7xl mx-auto">
+                  <CategoryMenu 
+                    categories={categories}
+                    activeCategoryId={activeCategory}
+                    onCategorySelect={setActiveCategory}
+                    sortOrder={sortOrder}
+                    onSortSelect={setSortOrder}
+                    mediaType={mediaType}
+                    onMediaTypeSelect={setMediaType}
+                    aspectRatioFilter={aspectRatioFilter}
+                    onAspectRatioSelect={setAspectRatioFilter}
+                    onOpenFilterModal={() => setFilterModalOpen(true)}
+                    onShuffleFeed={handleShuffleFeed}
+                    isLoggedIn={!!effectiveUser}
+                  />
+                </div>
+
                 {isLoading && images.length === 0 ? (
                   <div className="px-4 md:px-10">
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
