@@ -158,7 +158,7 @@ export default function ProfilePage({
   onLogin,
   onOpenProfileSwitcher
 }: ProfilePageProps) {
-  const { signOut: clerkSignOut } = useClerk();
+  const clerk = useClerk();
   const { user: clerkUser } = useUser();
   const { profileId } = useParams();
   const targetId = profileId || authUser?.uid;
@@ -647,15 +647,26 @@ export default function ProfilePage({
   };
 
   const userUploadsMemo = useMemo(() => {
-    return userUploads;
+    const seen = new Set<string>();
+    return userUploads.filter(i => {
+      if (!i || !i.id || seen.has(i.id)) return false;
+      seen.add(i.id);
+      return true;
+    });
   }, [userUploads]);
 
   const likedImagesMemo = useMemo(() => {
     // If it's own profile, use local likedImageIds set for reactivity
-    if (isOwnProfile) {
-      return allImages.filter(i => likedImageIds.has(i.id));
-    }
-    return allImages.filter(i => targetLikedIds.includes(i.id));
+    let baseList = isOwnProfile 
+      ? allImages.filter(i => likedImageIds.has(i.id))
+      : allImages.filter(i => targetLikedIds.includes(i.id));
+
+    const seen = new Set<string>();
+    return baseList.filter(i => {
+      if (!i || !i.id || seen.has(i.id)) return false;
+      seen.add(i.id);
+      return true;
+    });
   }, [allImages, isOwnProfile, likedImageIds, targetLikedIds]);
 
   const currentNavList = useMemo(() => {
@@ -703,8 +714,8 @@ export default function ProfilePage({
       await deleteDoc(doc(db, COLLECTIONS.USERS, targetId));
       
       if (isOwnProfile) {
-        if (clerkSignOut) {
-          await clerkSignOut();
+        if (clerk?.signOut) {
+          await clerk.signOut();
         }
         window.location.href = '/';
       } else {

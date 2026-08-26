@@ -30,6 +30,7 @@ import {
   recordProfileSession, 
   switchActiveProfile, 
   clearAllSavedProfiles, 
+  removeSavedProfile,
   SavedProfile 
 } from './services/profileManager';
 
@@ -62,7 +63,6 @@ function AppContent() {
   const { t } = useTranslation();
   const { user: clerkUser, isLoaded: isClerkLoaded, isSignedIn: isClerkSignedIn } = useUser();
   const clerk = useClerk();
-  const clerkSignOut = clerk.signOut;
 
   // Silky smooth scrolling haptics
   useScrollHaptics(true);
@@ -201,31 +201,43 @@ function AppContent() {
 
   const handleLogoutAll = useCallback(async () => {
     try {
-      if (clerkSignOut) {
-        await clerkSignOut();
-      }
-      clearAllSavedProfiles();
       setUser(null);
+      setLikedImageIds(new Set());
+      setFollowingIds(new Set());
+      setSavedImageIds(new Set());
+      clearAllSavedProfiles();
       setProfileSwitcherOpen(false);
+      if (clerk?.signOut) {
+        await clerk.signOut();
+      }
       notify('All curator sessions disconnected', 'info');
     } catch (err) {
       console.error("Failed to sign out of all sessions:", err);
+      setUser(null);
       notify('Error disconnecting sessions', 'error');
     }
-  }, [clerkSignOut, notify]);
+  }, [clerk, notify]);
 
   const handleLogoutCurrent = useCallback(async () => {
     try {
-      if (clerkSignOut) {
-        await clerkSignOut();
-      }
+      const activeUid = effectiveUser?.uid || user?.uid;
       setUser(null);
+      setLikedImageIds(new Set());
+      setFollowingIds(new Set());
+      setSavedImageIds(new Set());
+      if (activeUid) {
+        removeSavedProfile(activeUid);
+      }
       setProfileSwitcherOpen(false);
+      if (clerk?.signOut) {
+        await clerk.signOut();
+      }
       notify('Signed out successfully', 'info');
     } catch (err) {
       console.error("Failed to sign out:", err);
+      setUser(null);
     }
-  }, [clerkSignOut, notify]);
+  }, [clerk, effectiveUser, user, notify]);
 
   // Owner Bulk Select States
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -969,12 +981,24 @@ function AppContent() {
 
   const handleLogout = useCallback(async () => {
     try {
-      if (clerkSignOut) await clerkSignOut();
+      const activeUid = effectiveUser?.uid || user?.uid;
+      setUser(null);
+      setLikedImageIds(new Set());
+      setFollowingIds(new Set());
+      setSavedImageIds(new Set());
+      if (activeUid) {
+        removeSavedProfile(activeUid);
+      }
+      setProfileSwitcherOpen(false);
+      if (clerk?.signOut) {
+        await clerk.signOut();
+      }
       notify('Disconnected successfully', 'info');
     } catch (err) {
       console.error("Clerk sign out error:", err);
+      setUser(null);
     }
-  }, [clerkSignOut, notify]);
+  }, [clerk, effectiveUser, user, notify]);
 
   const cleanupDuplicates = useCallback(async () => {
     if (!user?.isAdmin) return;
@@ -1796,7 +1820,7 @@ function AppContent() {
                     <MasonryGrid 
                       key={`main-grid-${activeCategory}-${sortOrder}-${mediaType}`}
                       images={filteredImages} 
-                      user={user}
+                      user={effectiveUser}
                       onImageClick={handleImageClick}
                       onLike={handleLike}
                       onSave={handleSave}

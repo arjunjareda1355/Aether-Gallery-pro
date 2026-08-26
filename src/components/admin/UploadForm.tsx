@@ -754,7 +754,7 @@ export default function UploadForm({ categories, existingImages, onUpload, onAdd
                 <div className="flex gap-2 p-1 bg-white/5 rounded-2xl border border-white/5">
                   {(['image', 'video'] as const).map((type) => (
                     <button
-                      key={type}
+                      key={`media-type-btn-${type}`}
                       type="button"
                       onClick={() => setFormData(prev => ({ ...prev, type }))}
                       className={cn(

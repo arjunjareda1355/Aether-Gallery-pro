@@ -297,13 +297,13 @@ export default function ProfileAvatarEditor({
           </div>
 
           <div className="grid grid-cols-6 gap-1.5">
-            {DICEBEAR_STYLES.map((style) => {
+            {DICEBEAR_STYLES.map((style, idx) => {
               const previewUrl = `https://api.dicebear.com/7.x/${style.id}/svg?seed=${displayName || 'user'}_${selectedPresetSeed}_${style.id}`;
               const isSelected = currentPhotoURL === previewUrl;
 
               return (
                 <button
-                  key={style.id}
+                  key={`style-${style.id}-${idx}`}
                   type="button"
                   onClick={() => handleSelectPreset(style.id)}
                   title={style.name}

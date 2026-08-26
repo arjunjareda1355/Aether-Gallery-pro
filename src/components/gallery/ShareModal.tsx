@@ -315,11 +315,11 @@ export default function ShareModal({ image, isOpen, onClose, user }: ShareModalP
           <div className="mt-4">
             <p className="text-[11px] font-bold uppercase tracking-wider text-white/40 mb-2">Send Directly To</p>
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-              {socialItems.map((soc) => {
+              {socialItems.map((soc, idx) => {
                 const Icon = soc.icon;
                 return (
                   <a
-                    key={soc.name}
+                    key={`soc-share-${soc.name}-${idx}`}
                     href={soc.url}
                     target="_blank"
                     rel="noopener noreferrer"

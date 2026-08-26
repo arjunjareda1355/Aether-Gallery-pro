@@ -320,12 +320,12 @@ export default function ProfileSwitcherModal({
 
           {/* Accounts List (YouTube/Instagram Row Items) */}
           <div className="px-4 py-3 overflow-y-auto custom-scrollbar space-y-1.5 flex-1">
-            {accounts.map((acc) => {
+            {accounts.map((acc, idx) => {
               const isSwitching = switchingToUid === acc.uid;
               const isMenuOpen = activeMenuUid === acc.uid;
 
               return (
-                <div key={acc.uid} className="relative">
+                <div key={`acc-${acc.uid || 'account'}-${idx}`} className="relative">
                   <motion.div
                     whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}

@@ -383,7 +383,13 @@ export default React.memo(function Navbar({
                     )}
 
                     <div className="border-t border-white/[0.05] mt-1 pt-1">
-                      <button onClick={onLogout} className="w-full px-4 py-2.5 hover:bg-red-500/10 flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.1em] text-red-500/80 hover:text-red-500 transition-all">
+                      <button 
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          onLogout();
+                        }} 
+                        className="w-full px-4 py-2.5 hover:bg-red-500/10 flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.1em] text-red-500/80 hover:text-red-500 transition-all"
+                      >
                         <LogOut className="w-3.5 h-3.5" /> {t('nav.disconnect')}
                       </button>
                     </div>
