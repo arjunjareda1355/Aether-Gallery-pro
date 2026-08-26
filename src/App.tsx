@@ -45,7 +45,9 @@ import {
   handleFirebaseActionCode, 
   recordEmailVerifiedInFirestore 
 } from './services/emailVerificationService';
-import { hapticSuccess } from './utils/haptics';
+import { hapticSuccess, useScrollHaptics } from './utils/haptics';
+
+const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com', 'aethersanctuaryofficial@gmail.com'];
 
 export default function App() {
   return (
@@ -60,6 +62,10 @@ function AppContent() {
   const { user: clerkUser, isLoaded: isClerkLoaded, isSignedIn: isClerkSignedIn } = useUser();
   const clerk = useClerk();
   const clerkSignOut = clerk.signOut;
+
+  // Silky smooth scrolling haptics
+  useScrollHaptics(true);
+
   const [images, setImages] = useState<Image[]>([]);
   const [globalConfig, setGlobalConfig] = useState<any>(null);
   const [userInterests, setUserInterests] = useState<string[]>([]);
@@ -83,6 +89,48 @@ function AppContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [notification, setNotification] = useState<{ message: string, type: NotificationType } | null>(null);
+
+  // Instantly reactive active user calculation - prevents any Enter/Login button lag
+  const effectiveUser = useMemo<User | null>(() => {
+    if (!isClerkLoaded) return user;
+    if (!isClerkSignedIn || !clerkUser) return null;
+    const email = clerkUser.primaryEmailAddress?.emailAddress || '';
+    const uid = clerkUser.id;
+    const displayName = clerkUser.fullName || clerkUser.username || clerkUser.firstName || (email ? email.split('@')[0] : null);
+    const photoURL = clerkUser.imageUrl || null;
+    const isAdmin = ADMIN_EMAILS.some(e => email.toLowerCase() === e.toLowerCase()) || Boolean(user?.isAdmin);
+
+    if (user && user.uid === uid) {
+      return {
+        ...user,
+        email: email || user.email,
+        displayName: user.displayName || displayName,
+        photoURL: user.photoURL || photoURL,
+        isAdmin: isAdmin || user.isAdmin
+      };
+    }
+
+    return {
+      uid,
+      email,
+      isAdmin,
+      displayName,
+      photoURL,
+      isPremium: isAdmin,
+      isPremiumPending: false,
+      subscriptionPlan: null,
+      bio: null,
+      location: null,
+      website: null,
+      gender: null,
+      dob: null,
+      occupation: null,
+      theme: currentTheme || 'orange',
+      isBanned: false,
+      isHold: false,
+      emailVerified: true
+    };
+  }, [isClerkLoaded, isClerkSignedIn, clerkUser, user, currentTheme]);
 
   const notify = useCallback((message: string, type: NotificationType = 'info') => {
     setNotification({ message, type });
@@ -294,8 +342,7 @@ function AppContent() {
     triggerOnce: false
   });
  
-  const BATCH_SIZE = 24;
-  const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com', 'aethersanctuaryofficial@gmail.com']; 
+  const BATCH_SIZE = 24; 
  
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
@@ -1631,8 +1678,8 @@ function AppContent() {
       {!isEmbed && (
         <Navbar 
           searchQuery={searchQuery}
-          isAdmin={user?.isAdmin || false} 
-          user={user}
+          isAdmin={effectiveUser?.isAdmin || false} 
+          user={effectiveUser}
           onSearch={handleSearchChange} 
           onLogout={handleLogout}
           onLogin={handleLogin}
@@ -1658,7 +1705,7 @@ function AppContent() {
           <SmartOnboarding 
             onComplete={handleOnboardingComplete}
             onSkip={handleOnboardingComplete}
-            userName={user?.displayName || undefined}
+            userName={effectiveUser?.displayName || undefined}
           />
         )}
       </AnimatePresence>
@@ -1670,7 +1717,7 @@ function AppContent() {
           totalVisiblePosts={filteredImages.length > 0 ? filteredImages.length : images.length}
           allVisibleImages={filteredImages.length > 0 ? filteredImages : images}
           categories={categories}
-          user={user}
+          user={effectiveUser}
           onToggleSelectAll={handleToggleSelectAll}
           onClearSelection={handleClearSelection}
           onExitSelectMode={handleBulkExit}
@@ -1775,7 +1822,7 @@ function AppContent() {
                       onSave={(img) => handleSave(null, img)}
                       hasLiked={selectedImage ? likedImageIds.has(selectedImage.id) : false}
                       isSaved={selectedImage ? savedImageIds.has(selectedImage.id) : false}
-                      user={user}
+                      user={effectiveUser}
                       onNavigate={handleNavigate}
                       hasNext={filteredImages.length > 1}
                       hasPrev={filteredImages.length > 1}
@@ -1816,7 +1863,7 @@ function AppContent() {
               transition={{ duration: 0.2 }}
             >
               <ProfilePage 
-                user={user} 
+                user={effectiveUser} 
                 onLike={handleLike} 
                 onSave={handleSave} 
                 likedImageIds={likedImageIds}
@@ -1834,7 +1881,7 @@ function AppContent() {
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
             >
-              {user ? (
+              {effectiveUser ? (
                 <div className="pt-28 md:pt-36 px-4 md:px-8 max-w-7xl mx-auto space-y-8 pb-20">
                   <div className="flex justify-start">
                     <RouterLink 
@@ -1857,7 +1904,7 @@ function AppContent() {
                       existingImages={images} 
                       onUpload={handleUploadImage} 
                       onAddCategory={handleAddCategory}
-                      isAdmin={user.isAdmin} 
+                      isAdmin={effectiveUser.isAdmin} 
                       onNotify={notify}
                     />
                   </div>
@@ -1890,13 +1937,13 @@ function AppContent() {
 
           <Route path="/upgrade" element={
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <UpgradePage user={user} onLogin={handleLogin} />
+              <UpgradePage user={effectiveUser} onLogin={handleLogin} />
             </motion.div>
           } />
 
           <Route path="/moderation" element={
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {user?.isAdmin ? <ModerationPage /> : <Navigate to="/" replace />}
+              {effectiveUser?.isAdmin ? <ModerationPage /> : <Navigate to="/" replace />}
             </motion.div>
           } />
 
@@ -1908,14 +1955,14 @@ function AppContent() {
 
           <Route path="/developer" element={
              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-               <DeveloperPage user={user} />
+               <DeveloperPage user={effectiveUser} />
              </motion.div>
           } />
 
           <Route path="/admin" element={
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {user ? (
-                user.isAdmin ? (
+              {effectiveUser ? (
+                effectiveUser.isAdmin ? (
                   <div className="pt-24 md:pt-36 px-4 md:px-8 max-w-7xl mx-auto space-y-6 pb-20">
                     <div className="flex justify-start">
                       <RouterLink 
@@ -1952,7 +1999,7 @@ function AppContent() {
                           existingImages={images} 
                           onUpload={handleUploadImage} 
                           onAddCategory={handleAddCategory}
-                          isAdmin={user.isAdmin} 
+                          isAdmin={effectiveUser.isAdmin} 
                           onNotify={notify}
                         />
                       </div>
@@ -2028,7 +2075,7 @@ function AppContent() {
         {savingImage && (
           <CollectionModal 
             imageId={savingImage.id} 
-            user={user} 
+            user={effectiveUser} 
             onClose={() => setSavingImage(null)} 
           />
         )}
@@ -2046,7 +2093,7 @@ function AppContent() {
         <ProfileSwitcherModal
           isOpen={profileSwitcherOpen}
           onClose={() => setProfileSwitcherOpen(false)}
-          currentUser={user}
+          currentUser={effectiveUser}
           onSwitchToProfile={handleSwitchToProfile}
           onAddNewProfile={handleAddNewProfile}
           onLogoutAll={handleLogoutAll}

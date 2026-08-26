@@ -13,7 +13,10 @@ import {
   Crown,
   Loader2,
   Zap,
-  KeyRound
+  MoreVertical,
+  KeyRound,
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
 import { User as UserType } from '../../types';
 import { 
@@ -38,11 +41,12 @@ interface ProfileSwitcherModalProps {
   onOpenProfile?: () => void;
 }
 
-interface UnifiedProfileItem {
+interface UnifiedAccountItem {
   id: string;
   uid: string;
   email: string | null;
   displayName: string | null;
+  handle: string;
   photoURL: string | null;
   isAdmin?: boolean;
   isPremium?: boolean;
@@ -66,19 +70,20 @@ export default function ProfileSwitcherModal({
   const clerk = useClerk();
   const { sessions, setActive } = useSessionList();
 
-  const [switchingToId, setSwitchingToId] = useState<string | null>(null);
-  const [switchingTarget, setSwitchingTarget] = useState<UnifiedProfileItem | null>(null);
-  const [confirmClearAll, setConfirmClearAll] = useState(false);
-  const [savedUpdateTrigger, setSavedUpdateTrigger] = useState(0);
+  const [switchingToUid, setSwitchingToUid] = useState<string | null>(null);
+  const [switchingTarget, setSwitchingTarget] = useState<UnifiedAccountItem | null>(null);
+  const [activeMenuUid, setActiveMenuUid] = useState<string | null>(null);
+  const [confirmLogoutAll, setConfirmLogoutAll] = useState(false);
+  const [registryVersion, setRegistryVersion] = useState(0);
 
-  // Compute unified profiles declaratively with useMemo - eliminates setState loops
-  const unifiedProfiles = useMemo(() => {
+  // Compute unified list of accounts (Clerk active sessions + local saved accounts)
+  const accounts = useMemo<UnifiedAccountItem[]>(() => {
     if (!isOpen) return [];
 
     const saved = getSavedProfiles();
-    const map = new Map<string, UnifiedProfileItem>();
+    const map = new Map<string, UnifiedAccountItem>();
 
-    // 1. Add Clerk active sessions
+    // 1. Clerk Active Sessions
     if (sessions && Array.isArray(sessions)) {
       sessions.forEach(sess => {
         const u = sess.user;
@@ -86,32 +91,35 @@ export default function ProfileSwitcherModal({
         const email = u.primaryEmailAddress?.emailAddress || null;
         const uid = u.id;
         const displayName = u.fullName || u.username || u.firstName || (email ? email.split('@')[0] : 'Curator');
+        const handle = u.username ? `@${u.username}` : (email ? `@${email.split('@')[0]}` : `@curator_${uid.slice(-4)}`);
         const photoURL = u.imageUrl || null;
         const isCurrentActive = Boolean(
           currentUser && (currentUser.uid === uid || (email && currentUser.email?.toLowerCase() === email.toLowerCase()))
         );
 
-        const item: UnifiedProfileItem = {
+        map.set(uid, {
           id: `clerk-sess-${sess.id}`,
-          uid: uid,
-          email: email,
-          displayName: displayName,
-          photoURL: photoURL,
+          uid,
+          email,
+          displayName,
+          handle,
+          photoURL,
           isAdmin: currentUser && currentUser.uid === uid ? currentUser.isAdmin : false,
           isPremium: currentUser && currentUser.uid === uid ? currentUser.isPremium : false,
           sessionId: sess.id,
           isActive: isCurrentActive,
           hasActiveSession: true,
           lastActive: sess.lastActiveAt ? new Date(sess.lastActiveAt).getTime() : Date.now()
-        };
-
-        map.set(uid, item);
+        });
       });
     }
 
-    // 2. Merge with locally saved sanctuary history
+    // 2. Locally Saved Profile History
     saved.forEach(sp => {
       const existing = map.get(sp.uid);
+      const email = sp.email;
+      const handle = email ? `@${email.split('@')[0]}` : `@resident_${sp.uid.slice(-4)}`;
+
       if (existing) {
         existing.isAdmin = existing.isAdmin || sp.isAdmin;
         existing.isPremium = existing.isPremium || sp.isPremium;
@@ -126,6 +134,7 @@ export default function ProfileSwitcherModal({
           uid: sp.uid,
           email: sp.email,
           displayName: sp.displayName,
+          handle,
           photoURL: sp.photoURL,
           isAdmin: sp.isAdmin,
           isPremium: sp.isPremium,
@@ -138,13 +147,16 @@ export default function ProfileSwitcherModal({
       }
     });
 
-    // 3. Ensure current active user is represented
+    // 3. Current active user guarantee
     if (currentUser && currentUser.uid && !map.has(currentUser.uid)) {
+      const email = currentUser.email;
+      const handle = email ? `@${email.split('@')[0]}` : `@resident_${currentUser.uid.slice(-4)}`;
       map.set(currentUser.uid, {
         id: `current-user-${currentUser.uid}`,
         uid: currentUser.uid,
         email: currentUser.email,
         displayName: currentUser.displayName,
+        handle,
         photoURL: currentUser.photoURL,
         isAdmin: currentUser.isAdmin,
         isPremium: currentUser.isPremium,
@@ -156,6 +168,7 @@ export default function ProfileSwitcherModal({
       });
     }
 
+    // Order: Active profile first, then by warm sessions, then by last active timestamp
     return Array.from(map.values()).sort((a, b) => {
       if (a.isActive && !b.isActive) return -1;
       if (!a.isActive && b.isActive) return 1;
@@ -163,454 +176,340 @@ export default function ProfileSwitcherModal({
       if (!a.hasActiveSession && b.hasActiveSession) return 1;
       return (b.lastActive || 0) - (a.lastActive || 0);
     });
-  }, [isOpen, sessions, currentUser, savedUpdateTrigger]);
+  }, [isOpen, sessions, currentUser, registryVersion]);
 
-  const handleSelectProfile = async (item: UnifiedProfileItem) => {
-    if (item.isActive) {
+  const handleSwitch = async (account: UnifiedAccountItem) => {
+    if (account.isActive) {
       onClose();
       return;
     }
 
     hapticSelection();
-    setSwitchingToId(item.id);
-    setSwitchingTarget(item);
+    setSwitchingToUid(account.uid);
+    setSwitchingTarget(account);
 
     try {
-      if (item.sessionId && setActive) {
-        await setActive({ session: item.sessionId });
+      // 1. If Clerk session is already warm, switch instantly like YouTube/Instagram
+      if (account.sessionId && setActive) {
+        await setActive({ session: account.sessionId });
         hapticSuccess();
         setTimeout(() => {
           onClose();
-        }, 350);
+        }, 280);
         return;
       }
 
+      // Check if session exists in Clerk session list
       const matchingClerkSession = sessions?.find(
-        s => s.user?.id === item.uid || (item.email && s.user?.primaryEmailAddress?.emailAddress?.toLowerCase() === item.email.toLowerCase())
+        s => s.user?.id === account.uid || (account.email && s.user?.primaryEmailAddress?.emailAddress?.toLowerCase() === account.email.toLowerCase())
       );
+
       if (matchingClerkSession && setActive) {
         await setActive({ session: matchingClerkSession.id });
         hapticSuccess();
         setTimeout(() => {
           onClose();
-        }, 350);
+        }, 280);
         return;
       }
 
+      // 2. Saved offline profile: trigger app switch handler
       const targetSaved: SavedProfile = {
-        uid: item.uid,
-        email: item.email,
-        displayName: item.displayName,
-        photoURL: item.photoURL,
-        isAdmin: item.isAdmin,
-        isPremium: item.isPremium,
-        theme: item.theme,
+        uid: account.uid,
+        email: account.email,
+        displayName: account.displayName,
+        photoURL: account.photoURL,
+        isAdmin: account.isAdmin,
+        isPremium: account.isPremium,
+        theme: account.theme,
         lastActive: Date.now(),
-        sessionId: item.sessionId
+        sessionId: account.sessionId
       };
 
-      await onSwitchToProfile(targetSaved, item.sessionId);
+      await onSwitchToProfile(targetSaved, account.sessionId);
     } catch (err) {
-      console.error("Profile switch error:", err);
+      console.error("Account switch error:", err);
       const targetSaved: SavedProfile = {
-        uid: item.uid,
-        email: item.email,
-        displayName: item.displayName,
-        photoURL: item.photoURL,
-        isAdmin: item.isAdmin,
-        isPremium: item.isPremium,
-        theme: item.theme,
+        uid: account.uid,
+        email: account.email,
+        displayName: account.displayName,
+        photoURL: account.photoURL,
+        isAdmin: account.isAdmin,
+        isPremium: account.isPremium,
+        theme: account.theme,
         lastActive: Date.now()
       };
       onSwitchToProfile(targetSaved);
     } finally {
       setTimeout(() => {
-        setSwitchingToId(null);
+        setSwitchingToUid(null);
         setSwitchingTarget(null);
-      }, 500);
+      }, 400);
     }
   };
 
-  const handleRemoveProfile = (e: React.MouseEvent, item: UnifiedProfileItem) => {
+  const handleRemoveAccount = (e: React.MouseEvent, account: UnifiedAccountItem) => {
     e.stopPropagation();
     hapticLight();
-    removeSavedProfile(item.uid);
-    setSavedUpdateTrigger(prev => prev + 1);
+    removeSavedProfile(account.uid);
+    setActiveMenuUid(null);
+    setRegistryVersion(v => v + 1);
   };
 
-  const handleClearAll = () => {
+  const handleLogoutAllAccounts = () => {
     hapticLight();
     clearAllSavedProfiles();
-    setSavedUpdateTrigger(prev => prev + 1);
-    setConfirmClearAll(false);
+    setRegistryVersion(v => v + 1);
+    setConfirmLogoutAll(false);
+    onClose();
+    if (onLogoutAll) {
+      onLogoutAll();
+    } else if (clerk?.signOut) {
+      clerk.signOut();
+    }
   };
 
   if (!isOpen) return null;
 
-  const currentActiveProfile = unifiedProfiles.find(p => p.isActive) || (currentUser ? {
-    id: 'current',
-    uid: currentUser.uid,
-    email: currentUser.email,
-    displayName: currentUser.displayName,
-    photoURL: currentUser.photoURL,
-    isAdmin: currentUser.isAdmin,
-    isPremium: currentUser.isPremium,
-    isActive: true,
-    hasActiveSession: true
-  } : null);
-
-  const otherProfiles = unifiedProfiles.filter(p => !p.isActive);
-
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-[130] flex items-center justify-center p-3 sm:p-4">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.25, ease: 'easeInOut' }}
+          transition={{ duration: 0.2 }}
           onClick={() => {
-            if (!switchingToId) onClose();
+            if (!switchingToUid) onClose();
           }}
           className="absolute inset-0 bg-black/80 backdrop-blur-xl"
         />
 
-        {/* Modal Window */}
+        {/* YouTube / Instagram Style Accounts Card */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.96, y: 15 }}
+          initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 15 }}
-          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-          className="relative w-full max-w-lg bg-card-dark border border-white/10 rounded-[32px] shadow-[0_30px_90px_rgba(0,0,0,0.95)] overflow-hidden z-10 flex flex-col max-h-[90vh]"
+          exit={{ opacity: 0, scale: 0.95, y: 15 }}
+          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          className="relative w-full max-w-md bg-[#0e0e12] border border-white/15 rounded-[32px] shadow-[0_30px_90px_rgba(0,0,0,0.95)] overflow-hidden z-10 flex flex-col max-h-[88vh]"
         >
-          {/* Switching Overlay */}
-          <AnimatePresence>
-            {switchingTarget && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="absolute inset-0 z-50 bg-bg-dark/95 backdrop-blur-md flex flex-col items-center justify-center gap-4 p-6 text-center"
-              >
-                <motion.div
-                  initial={{ scale: 0.8 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', stiffness: 350, damping: 25 }}
-                  className="relative"
-                >
-                  {switchingTarget.photoURL ? (
-                    <img
-                      src={switchingTarget.photoURL}
-                      alt={switchingTarget.displayName || ''}
-                      referrerPolicy="no-referrer"
-                      className="w-20 h-20 rounded-full object-cover border-2 border-brand-primary shadow-2xl shadow-brand-primary/30"
-                    />
-                  ) : (
-                    <div className="w-20 h-20 rounded-full bg-brand-primary/10 border-2 border-brand-primary flex items-center justify-center text-brand-primary">
-                      <UserIcon className="w-10 h-10" />
-                    </div>
-                  )}
-                  <span className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-brand-primary text-bg-dark flex items-center justify-center shadow-lg">
-                    <Loader2 className="w-4 h-4 animate-spin text-black" />
-                  </span>
-                </motion.div>
+          {/* Top Indicator Drag Bar */}
+          <div className="flex justify-center pt-3 pb-1">
+            <div className="w-10 h-1 rounded-full bg-white/20" />
+          </div>
 
-                <div className="space-y-1.5 max-w-xs">
-                  <p className="text-sm font-display font-black uppercase tracking-wider text-text-main">
-                    Switching to {switchingTarget.displayName || 'Curator'}
-                  </p>
-                  <p className="text-xs text-text-dim/70 font-mono truncate">
-                    {switchingTarget.email || 'Activating session context...'}
-                  </p>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Modal Header */}
-          <div className="flex items-center justify-between p-5 sm:p-6 border-b border-white/5 bg-white/[0.02]">
-            <div className="flex items-center gap-3.5">
-              <div className="w-10 h-10 rounded-2xl bg-brand-primary/15 border border-brand-primary/30 flex items-center justify-center text-brand-primary shadow-md shadow-brand-primary/10">
-                <Users className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-display font-black text-text-main uppercase tracking-tight">
-                  Switch Identity
-                </h3>
-                <p className="text-[10px] text-text-dim/70 font-mono uppercase tracking-wider">
-                  Manage & toggle multiple curator accounts
-                </p>
-              </div>
+          {/* Header (Instagram/YouTube Style) */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-display font-black text-white uppercase tracking-tight">
+                Switch Account
+              </h2>
+              <span className="px-2 py-0.5 rounded-full bg-white/5 text-[10px] font-mono font-bold text-zinc-400">
+                {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}
+              </span>
             </div>
 
             <button
               onClick={onClose}
-              className="p-2.5 rounded-full bg-white/5 hover:bg-white/10 text-text-dim hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Modal Content */}
-          <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-5 flex-1">
-            
-            {/* Active Profile */}
-            {currentActiveProfile && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase tracking-[0.15em] text-text-dim/60 font-mono">
-                    Active Identity
-                  </span>
-                  <span className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-400">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Online
-                  </span>
-                </div>
+          {/* Accounts List (YouTube/Instagram Row Items) */}
+          <div className="px-4 py-3 overflow-y-auto custom-scrollbar space-y-1.5 flex-1">
+            {accounts.map((acc) => {
+              const isSwitching = switchingToUid === acc.uid;
+              const isMenuOpen = activeMenuUid === acc.uid;
 
-                <div className="p-4 rounded-2xl border border-brand-primary/40 bg-brand-primary/10 shadow-lg shadow-brand-primary/5 flex items-center justify-between relative overflow-hidden group">
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="relative shrink-0">
-                      {currentActiveProfile.photoURL ? (
-                        <img
-                          src={currentActiveProfile.photoURL}
-                          alt={currentActiveProfile.displayName || 'Current Profile'}
-                          referrerPolicy="no-referrer"
-                          className="w-12 h-12 rounded-full object-cover border-2 border-brand-primary shadow-md"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 rounded-full bg-brand-primary/20 border-2 border-brand-primary flex items-center justify-center text-brand-primary">
-                          <UserIcon className="w-6 h-6" />
-                        </div>
-                      )}
-                      <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 rounded-full border-2 border-bg-dark flex items-center justify-center">
-                        <Check className="w-2.5 h-2.5 text-black stroke-[3]" />
-                      </span>
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-black text-text-main truncate uppercase tracking-tight">
-                          {currentActiveProfile.displayName || 'Resident Curator'}
-                        </h4>
-                        {currentActiveProfile.isAdmin && (
-                          <span className="px-1.5 py-0.5 rounded bg-brand-primary/20 text-brand-primary text-[8px] font-black uppercase tracking-wider border border-brand-primary/30 flex items-center gap-0.5">
-                            <Shield className="w-2.5 h-2.5" /> Admin
-                          </span>
+              return (
+                <div key={acc.uid} className="relative">
+                  <motion.div
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => handleSwitch(acc)}
+                    className={cn(
+                      "w-full flex items-center justify-between p-3.5 rounded-2xl transition-all cursor-pointer select-none group border",
+                      acc.isActive
+                        ? "bg-brand-primary/10 border-brand-primary/40 shadow-md shadow-brand-primary/5"
+                        : "bg-white/[0.02] border-white/5 hover:bg-white/[0.06] hover:border-white/15"
+                    )}
+                  >
+                    {/* Left: Avatar with Ring + User Handle & Name */}
+                    <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                      {/* Avatar */}
+                      <div className="relative shrink-0">
+                        {acc.photoURL ? (
+                          <img
+                            src={acc.photoURL}
+                            alt={acc.displayName || 'Profile'}
+                            referrerPolicy="no-referrer"
+                            className={cn(
+                              "w-12 h-12 rounded-full object-cover transition-all",
+                              acc.isActive 
+                                ? "ring-2 ring-brand-primary p-0.5" 
+                                : "border border-white/15 group-hover:border-brand-primary/40"
+                            )}
+                          />
+                        ) : (
+                          <div className={cn(
+                            "w-12 h-12 rounded-full flex items-center justify-center text-zinc-300 transition-all",
+                            acc.isActive
+                              ? "bg-brand-primary/20 ring-2 ring-brand-primary text-brand-primary"
+                              : "bg-white/5 border border-white/10 group-hover:text-white"
+                          )}>
+                            <UserIcon className="w-5 h-5" />
+                          </div>
                         )}
-                        {currentActiveProfile.isPremium && !currentActiveProfile.isAdmin && (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[8px] font-black uppercase tracking-wider border border-amber-500/30 flex items-center gap-0.5">
-                            <Crown className="w-2.5 h-2.5" /> Pro
+
+                        {/* Warm Session Badge */}
+                        {acc.hasActiveSession && !acc.isActive && (
+                          <span 
+                            title="Instant Switch Ready"
+                            className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-brand-primary rounded-full border-2 border-[#0e0e12] flex items-center justify-center text-black"
+                          >
+                            <Zap className="w-2.5 h-2.5 fill-current" />
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-text-dim/80 font-mono truncate mt-0.5">
-                        {currentActiveProfile.email || 'Sanctuary resident'}
-                      </p>
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1 text-left">
+                        <div className="flex items-center gap-2">
+                          <h3 className={cn(
+                            "text-sm font-bold truncate leading-tight",
+                            acc.isActive ? "text-white" : "text-zinc-200 group-hover:text-white"
+                          )}>
+                            {acc.displayName || 'Resident Curator'}
+                          </h3>
+                          {acc.isAdmin && (
+                            <span className="px-1.5 py-0.5 rounded bg-brand-primary/20 text-brand-primary text-[8px] font-black uppercase tracking-wider border border-brand-primary/30 flex items-center gap-0.5">
+                              <Shield className="w-2.5 h-2.5" /> Admin
+                            </span>
+                          )}
+                          {acc.isPremium && !acc.isAdmin && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[8px] font-black uppercase tracking-wider border border-amber-500/30 flex items-center gap-0.5">
+                              <Crown className="w-2.5 h-2.5" /> Pro
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-[11px] text-zinc-400 font-mono truncate">
+                            {acc.handle || acc.email}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="shrink-0 ml-3">
-                    <span className="px-3 py-1 bg-brand-primary text-black text-[9px] font-black uppercase tracking-widest rounded-full shadow-sm">
-                      Current
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
+                    {/* Right: Instagram Checkmark OR Switch Arrow */}
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      {isSwitching ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-brand-primary" />
+                      ) : acc.isActive ? (
+                        <div className="w-7 h-7 rounded-full bg-brand-primary flex items-center justify-center text-black shadow-lg shadow-brand-primary/30">
+                          <Check className="w-4 h-4 stroke-[3]" />
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveMenuUid(isMenuOpen ? null : acc.uid);
+                            }}
+                            className="p-1.5 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+                          <div className="w-7 h-7 rounded-full bg-white/5 group-hover:bg-brand-primary group-hover:text-black flex items-center justify-center text-zinc-400 transition-colors">
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
 
-            {/* Other Profiles */}
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black uppercase tracking-[0.15em] text-text-dim/60 font-mono">
-                  Switch to Another Account ({otherProfiles.length})
-                </span>
-                {otherProfiles.length > 0 && !confirmClearAll && (
-                  <button
-                    onClick={() => setConfirmClearAll(true)}
-                    className="text-[9px] font-black uppercase tracking-wider text-text-dim/50 hover:text-red-400 transition-colors cursor-pointer"
-                  >
-                    Clear History
-                  </button>
-                )}
-                {confirmClearAll && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-red-400 font-bold">Clear all saved?</span>
-                    <button
-                      onClick={handleClearAll}
-                      className="px-2 py-0.5 bg-red-500/20 text-red-400 text-[8px] font-black uppercase rounded hover:bg-red-500/30 cursor-pointer"
-                    >
-                      Yes
-                    </button>
-                    <button
-                      onClick={() => setConfirmClearAll(false)}
-                      className="text-[8px] text-text-dim hover:text-white cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {otherProfiles.length === 0 ? (
-                <div className="p-6 rounded-2xl border border-dashed border-white/10 bg-white/[0.01] text-center space-y-2">
-                  <Users className="w-8 h-8 mx-auto text-text-dim/40" />
-                  <p className="text-xs font-bold text-text-main">No other profiles detected</p>
-                  <p className="text-[10px] text-text-dim/60 font-mono">
-                    Click "Add Another Profile" below to sign in to multiple accounts on this device.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {otherProfiles.map((p) => {
-                    const isSwitching = switchingToId === p.id;
-
-                    return (
+                  {/* Context Menu for single account */}
+                  <AnimatePresence>
+                    {isMenuOpen && (
                       <motion.div
-                        key={p.id}
-                        layout
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        onClick={() => handleSelectProfile(p)}
-                        className={cn(
-                          "flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer group relative overflow-hidden",
-                          isSwitching
-                            ? "bg-brand-primary/25 border-brand-primary"
-                            : p.hasActiveSession
-                              ? "bg-white/[0.03] border-white/10 hover:border-brand-primary/40 hover:bg-white/[0.06] shadow-sm"
-                              : "bg-white/[0.015] border-white/5 hover:border-white/20 hover:bg-white/[0.04]"
-                        )}
+                        initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                        className="absolute right-4 top-14 z-50 bg-[#17171d] border border-white/15 rounded-2xl shadow-2xl p-1.5 min-w-[160px]"
                       >
-                        {/* Avatar & User Details */}
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="relative shrink-0">
-                            {p.photoURL ? (
-                              <img
-                                src={p.photoURL}
-                                alt={p.displayName || 'Profile'}
-                                referrerPolicy="no-referrer"
-                                className="w-10 h-10 rounded-full object-cover border border-white/15 group-hover:border-brand-primary/40 transition-colors"
-                              />
-                            ) : (
-                              <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-text-dim group-hover:text-brand-primary transition-colors">
-                                <UserIcon className="w-5 h-5" />
-                              </div>
-                            )}
-
-                            {p.hasActiveSession && (
-                              <span 
-                                title="Active session ready for instant switch"
-                                className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-brand-primary rounded-full border-2 border-bg-dark flex items-center justify-center text-bg-dark"
-                              >
-                                <Zap className="w-2 h-2 fill-current" />
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-black text-text-main truncate uppercase tracking-tight group-hover:text-brand-primary transition-colors">
-                                {p.displayName || 'Curator Profile'}
-                              </span>
-                              {p.isAdmin && (
-                                <span className="px-1.5 py-0.5 rounded bg-brand-primary/20 text-brand-primary text-[8px] font-black uppercase">
-                                  Admin
-                                </span>
-                              )}
-                              {p.isPremium && !p.isAdmin && (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[8px] font-black uppercase">
-                                  Pro
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[10px] text-text-dim/70 font-mono truncate mt-0.5">
-                              {p.email || 'Stored profile memory'}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="flex items-center gap-2 shrink-0 ml-2">
-                          <button
-                            type="button"
-                            onClick={(e) => handleRemoveProfile(e, p)}
-                            title="Forget this account from switcher"
-                            className="p-2 rounded-xl bg-white/5 text-text-dim hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleSelectProfile(p)}
-                            className={cn(
-                              "px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer",
-                              p.hasActiveSession
-                                ? "bg-brand-primary text-black hover:brightness-110 shadow-md shadow-brand-primary/20"
-                                : "bg-white/10 text-white hover:bg-brand-primary hover:text-black"
-                            )}
-                          >
-                            {p.hasActiveSession ? (
-                              <>
-                                <span>Switch</span>
-                                <ArrowRight className="w-3 h-3" />
-                              </>
-                            ) : (
-                              <>
-                                <span>Sign In</span>
-                                <KeyRound className="w-3 h-3" />
-                              </>
-                            )}
-                          </button>
-                        </div>
+                        <button
+                          onClick={(e) => handleRemoveAccount(e, acc)}
+                          className="w-full px-3 py-2 text-left text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2 transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Remove from device</span>
+                        </button>
                       </motion.div>
-                    );
-                  })}
+                    )}
+                  </AnimatePresence>
                 </div>
-              )}
-            </div>
+              );
+            })}
           </div>
 
-          {/* Modal Footer */}
-          <div className="p-5 sm:p-6 border-t border-white/5 bg-white/[0.015] space-y-2.5">
+          {/* Bottom Actions (Instagram & YouTube style "+ Add Account" & Logouts) */}
+          <div className="p-4 border-t border-white/5 bg-white/[0.015] space-y-2.5">
+            {/* Add Account Button */}
             <button
               onClick={() => {
                 onClose();
                 onAddNewProfile();
               }}
-              className="w-full py-3.5 px-4 bg-brand-primary hover:brightness-110 active:scale-[0.99] text-bg-dark font-black text-xs uppercase tracking-[0.2em] rounded-2xl transition-all shadow-lg shadow-brand-primary/25 flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-3.5 px-4 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-brand-primary/40 active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider rounded-2xl transition-all flex items-center justify-center gap-2.5 cursor-pointer shadow-sm group"
             >
-              <Plus className="w-4 h-4 stroke-[3]" />
-              <span>Add Another Profile</span>
+              <div className="w-5 h-5 rounded-full bg-brand-primary/20 text-brand-primary flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+              </div>
+              <span className="group-hover:text-brand-primary transition-colors">Add Account</span>
             </button>
 
-            <div className="flex items-center justify-between pt-1 text-[10px] text-text-dim/60 font-mono">
-              {onLogoutCurrent && currentUser && (
+            {/* Account Management Links */}
+            <div className="flex items-center justify-between px-1 pt-1 text-[11px] text-zinc-400 font-medium">
+              {currentUser && onLogoutCurrent && (
                 <button
                   onClick={() => {
                     onClose();
                     onLogoutCurrent();
                   }}
-                  className="hover:text-text-main transition-colors flex items-center gap-1 cursor-pointer"
+                  className="hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
-                  <LogOut className="w-3 h-3" />
-                  <span>Sign out current</span>
+                  <LogOut className="w-3.5 h-3.5 text-zinc-500" />
+                  <span>Log out @{currentUser.email ? currentUser.email.split('@')[0] : 'current'}</span>
                 </button>
               )}
 
-              {onLogoutAll && (
+              {!confirmLogoutAll ? (
                 <button
-                  onClick={() => {
-                    onClose();
-                    onLogoutAll();
-                  }}
-                  className="hover:text-red-400 transition-colors ml-auto flex items-center gap-1 cursor-pointer"
+                  onClick={() => setConfirmLogoutAll(true)}
+                  className="text-zinc-500 hover:text-red-400 transition-colors ml-auto flex items-center gap-1 cursor-pointer"
                 >
-                  <LogOut className="w-3 h-3 text-red-400" />
-                  <span className="text-red-400/80 hover:text-red-400 font-bold">Sign out of all sessions</span>
+                  <span>Log out of all accounts</span>
                 </button>
+              ) : (
+                <div className="flex items-center gap-2 ml-auto">
+                  <span className="text-red-400 text-[10px] font-bold">Log out all?</span>
+                  <button
+                    onClick={handleLogoutAllAccounts}
+                    className="px-2 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-bold rounded hover:bg-red-500/30 cursor-pointer"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setConfirmLogoutAll(false)}
+                    className="text-[10px] text-zinc-400 hover:text-white cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
               )}
             </div>
           </div>

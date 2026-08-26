@@ -390,10 +390,7 @@ export default React.memo(function ImageCard({
       return;
     }
     
-    const res = await shareAsset(image, user);
-    if (res.method === 'clipboard') {
-      alert(res.message);
-    }
+    await shareAsset(image, user);
   };
 
   const handleDownload = async (e: React.MouseEvent) => {

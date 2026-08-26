@@ -1,13 +1,39 @@
 import { Image, User } from '../types';
 import { copyToClipboard } from '../lib/utils';
 import { trackActivity } from '../lib/recommendation';
+import { hapticSparkle, hapticSuccess } from './haptics';
 
-export const APP_LINK = 'https://aethergallerypro.vercel.app/';
+export const FALLBACK_APP_LINK = 'https://aethergallerypro.vercel.app';
+export const APP_LINK = FALLBACK_APP_LINK;
+
+/**
+ * Returns the current application base URL dynamically
+ */
+export function getBaseAppUrl(): string {
+  if (typeof window !== 'undefined' && window.location.origin) {
+    const origin = window.location.origin;
+    // If not a local dev port or if user opens in iframe, return origin
+    if (!origin.includes('localhost:3000')) {
+      return origin.replace(/\/$/, '');
+    }
+  }
+  return FALLBACK_APP_LINK;
+}
+
+export default {
+  FALLBACK_APP_LINK,
+  APP_LINK,
+  getBaseAppUrl,
+  shareAsset,
+  buildShareContent,
+  isYouTubeUrl
+};
 
 export interface ShareResult {
   success: boolean;
-  method: 'native-file' | 'native-link' | 'clipboard';
+  method: 'native-share' | 'native-file' | 'clipboard';
   message: string;
+  shareUrl: string;
 }
 
 /**
@@ -19,46 +45,50 @@ export function isYouTubeUrl(url?: string | null): boolean {
 }
 
 /**
- * Returns formatted share text strictly conforming to specifications:
- * - Images: description + post link + app link
- * - Direct MP4 Videos: description + post link + app link
- * - YouTube Videos: description (if any) + original video link + post link + app link (share link only)
+ * Returns formatted share text with rich context and direct clickable links:
+ * - Title
+ * - Description (if available)
+ * - Direct Post Link (clickable in all messaging platforms)
+ * - Original Video Link (for YouTube)
+ * - Application Link
  */
 export function buildShareContent(image: Image) {
-  const postUrl = `${APP_LINK}?post=${image.id}`;
+  const baseAppUrl = getBaseAppUrl();
+  const postUrl = `${baseAppUrl}/?post=${encodeURIComponent(image.id)}`;
   const originalLink = image.externalLink || (image.url && image.url.startsWith('http') && !image.url.includes('firebasestorage') && !image.url.includes('blob:') ? image.url : null);
   const isYouTube = isYouTubeUrl(image.url) || isYouTubeUrl(originalLink);
 
-  const title = (image.title && image.title.trim()) || 'Aether Sanctuary';
+  const title = (image.title && image.title.trim()) || 'Aether Visual Creation';
   const description = (image.description && image.description.trim()) || '';
+  const isVideo = image.type === 'video' || /\.(mp4|webm|ogg|mov)$/i.test(image.url || '');
 
   if (isYouTube) {
     const ytUrl = isYouTubeUrl(image.url) ? image.url : (originalLink || image.url);
-    const textParts: string[] = [];
-    if (title) textParts.push(`✨ ${title}`);
-    if (description && description !== title) textParts.push(description);
-    textParts.push(`▶️ YouTube Video: ${ytUrl}`);
-    textParts.push(`🔗 Post Link: ${postUrl}`);
-    textParts.push(`🌐 App Link: ${APP_LINK}`);
-    
+    const textParts: string[] = [
+      `✨ ${title}`,
+      description && description !== title ? `${description}` : '',
+      `▶️ YouTube Video: ${ytUrl}`,
+      `🔗 View on Aether: ${postUrl}`,
+      `🌐 Aether Sanctuary: ${baseAppUrl}`
+    ].filter(Boolean);
+
     return {
       isYouTube: true,
       isVideo: true,
       postUrl,
-      targetUrl: ytUrl,
+      targetUrl: ytUrl || postUrl,
       title,
       text: textParts.join('\n\n')
     };
   }
 
-  const isVideo = image.type === 'video' || /\.(mp4|webm|ogg|mov)$/i.test(image.url || '');
-
-  // Direct Image or MP4 Video
-  const textParts: string[] = [];
-  if (title) textParts.push(`✨ ${title}`);
-  if (description && description !== title) textParts.push(description);
-  textParts.push(`🔗 Post Link: ${postUrl}`);
-  textParts.push(`🌐 App Link: ${APP_LINK}`);
+  // Direct Image or Direct MP4 Video
+  const textParts: string[] = [
+    `✨ ${title}`,
+    description && description !== title ? `${description}` : '',
+    `🔗 View Post: ${postUrl}`,
+    `🌐 Aether Sanctuary: ${baseAppUrl}`
+  ].filter(Boolean);
 
   return {
     isYouTube: false,
@@ -71,83 +101,10 @@ export function buildShareContent(image: Image) {
 }
 
 /**
- * Helper to fetch media blob safely with Data URL, CORS, and Canvas image fallback
- */
-async function fetchMediaBlob(url: string, isVideo: boolean): Promise<Blob | null> {
-  if (!url) return null;
-
-  // 1. Data URL
-  if (url.startsWith('data:')) {
-    try {
-      const parts = url.split(',');
-      const mimeMatch = parts[0].match(/:(.*?);/);
-      const mime = mimeMatch ? mimeMatch[1] : (isVideo ? 'video/mp4' : 'image/jpeg');
-      const bstr = atob(parts[1]);
-      let n = bstr.length;
-      const u8arr = new Uint8Array(n);
-      while (n--) {
-        u8arr[n] = bstr.charCodeAt(n);
-      }
-      return new Blob([u8arr], { type: mime });
-    } catch (e) {
-      console.warn('Data URL conversion failed:', e);
-    }
-  }
-
-  // 2. Direct CORS Fetch with timeout
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(url, { mode: 'cors', signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const blob = await res.blob();
-      return blob;
-    }
-  } catch (err) {
-    console.warn('Direct fetch failed, checking canvas fallback for image:', err);
-  }
-
-  // 3. For images, try loading into Image element + Canvas to get Blob
-  if (!isVideo) {
-    try {
-      const blob = await new Promise<Blob | null>((resolve) => {
-        const img = new window.Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          try {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.naturalWidth || img.width;
-            canvas.height = img.naturalHeight || img.height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(img, 0, 0);
-              canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.95);
-            } else {
-              resolve(null);
-            }
-          } catch {
-            resolve(null);
-          }
-        };
-        img.onerror = () => resolve(null);
-        img.src = url;
-      });
-      if (blob) return blob;
-    } catch (e) {
-      console.warn('Canvas blob conversion fallback failed:', e);
-    }
-  }
-
-  return null;
-}
-
-/**
  * Executes high-fidelity sharing:
- * 1. YouTube videos: share with link only (title + original video link + post link + app link)
- * 2. Direct Images: share as image file with post link and app link
- * 3. Direct Videos: share as mp4 video file with post link and app link
- * 4. Falls back to Web Share API (links) or Clipboard Copy
+ * - Shares the post link, title, and formatted description
+ * - Works across WhatsApp, Telegram, iMessage, Twitter/X, Discord, Slack, Instagram
+ * - Copies link to clipboard as a reliable backup
  */
 export async function shareAsset(image: Image, user?: User | null): Promise<ShareResult> {
   const content = buildShareContent(image);
@@ -156,119 +113,50 @@ export async function shareAsset(image: Image, user?: User | null): Promise<Shar
     trackActivity(user.uid, [image.category, ...(image.tags || [])], 'share');
   }
 
-  // 1. YouTube video sharing: share YouTube videos with link only
-  if (content.isYouTube) {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: content.title,
-          text: content.text,
-          url: content.targetUrl
-        });
-        return { success: true, method: 'native-link', message: 'YouTube video link shared successfully!' };
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
-          return { success: true, method: 'native-link', message: 'Share dismissed.' };
-        }
-      }
-    }
-
-    const copied = await copyToClipboard(content.text);
-    return {
-      success: copied,
-      method: 'clipboard',
-      message: copied ? 'YouTube video link & post link copied to clipboard!' : 'Failed to copy share link.'
-    };
+  // Pre-copy direct post link to clipboard so the user always has it instantly
+  try {
+    await copyToClipboard(content.postUrl);
+  } catch (e) {
+    // Non-blocking
   }
 
-  // 2. Direct Image or MP4 Video: Share as File with links
-  const targetMedia = image.url || image.thumbnailUrl;
-  const isVideo = content.isVideo;
-
-  if (targetMedia && navigator.share) {
-    try {
-      const blob = await fetchMediaBlob(targetMedia, isVideo);
-      if (blob) {
-        let mimeType = blob.type;
-        let ext = 'jpg';
-
-        if (isVideo) {
-          mimeType = 'video/mp4';
-          ext = 'mp4';
-        } else {
-          if (mimeType.includes('png')) ext = 'png';
-          else if (mimeType.includes('webp')) ext = 'webp';
-          else if (mimeType.includes('gif')) ext = 'gif';
-          else {
-            ext = 'jpg';
-            mimeType = 'image/jpeg';
-          }
-        }
-
-        const cleanTitle = (image.title || (isVideo ? 'aether_video' : 'aether_image'))
-          .replace(/[^a-zA-Z0-9_-]/g, '_')
-          .substring(0, 50);
-
-        const file = new File([blob], `${cleanTitle}.${ext}`, { type: mimeType });
-
-        // Check file share capability
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          const sharePayload: ShareData = {
-            title: content.title,
-            text: content.text,
-            files: [file]
-          };
-
-          // Try sharing with files + links
-          try {
-            await navigator.share(sharePayload);
-            return {
-              success: true,
-              method: 'native-file',
-              message: isVideo ? 'MP4 Video shared with links!' : 'Image shared with links!'
-            };
-          } catch (shareErr: any) {
-            if (shareErr.name === 'AbortError') {
-              return { success: true, method: 'native-file', message: 'Share dismissed.' };
-            }
-            throw shareErr;
-          }
-        }
-      }
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        return { success: true, method: 'native-file', message: 'Share dismissed.' };
-      }
-      console.warn('Direct media file share fallback to link share:', err);
-    }
-  }
-
-  // 3. Fallback: Generic Web Share API (link only)
-  if (navigator.share) {
+  // 1. Native Web Share API with full rich URL and text payload
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
     try {
       await navigator.share({
         title: content.title,
         text: content.text,
         url: content.postUrl
       });
-      return { 
-        success: true, 
-        method: 'native-link', 
-        message: isVideo ? 'Video link & description shared!' : 'Image link & description shared!' 
+      hapticSparkle();
+      return {
+        success: true,
+        method: 'native-share',
+        message: 'Shared successfully with direct post link!',
+        shareUrl: content.postUrl
       };
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        return { success: true, method: 'native-link', message: 'Share dismissed.' };
+        return {
+          success: true,
+          method: 'native-share',
+          message: 'Share dismissed.',
+          shareUrl: content.postUrl
+        };
       }
+      console.warn('Native share API error, falling back to clipboard:', err);
     }
   }
 
-  // 4. Absolute Fallback: Copy formatted text with links to clipboard
+  // 2. Clipboard Fallback: Copy the rich formatted post text and clickable link
   const copied = await copyToClipboard(content.text);
+  if (copied) {
+    hapticSuccess();
+  }
   return {
     success: copied,
     method: 'clipboard',
-    message: copied ? 'Post link, description & app link copied to clipboard!' : 'Failed to copy share link.'
+    message: copied ? 'Post link & details copied to clipboard!' : 'Failed to copy share link.',
+    shareUrl: content.postUrl
   };
 }
-

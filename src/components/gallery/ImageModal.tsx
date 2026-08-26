@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { ZoomIn, ZoomOut, Maximize2, X, Heart, Share2, Download, Copy, ExternalLink, Calendar, Tag, Flag, BookmarkPlus, MessageSquare, Clock, Trash2, AlertCircle, Sparkles, Minimize2, ChevronLeft, ChevronRight, UserCircle, Mail, ShieldCheck, PlusCircle, MapPin, Briefcase, User as UserIcon, Code, Play, Youtube, Bell, Check, Volume2, VolumeX, Music, Headphones, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import { Image, User } from '../../types';
-import { shareAsset, APP_LINK } from '../../utils/shareUtils';
+import { shareAsset, APP_LINK, getBaseAppUrl } from '../../utils/shareUtils';
 import CommentSection from './CommentSection';
 import CollectionModal from './CollectionModal';
 import { db, COLLECTIONS } from '../../lib/firebase';
@@ -599,10 +599,10 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
   };
 
   const handleCopyLink = async () => {
-    const shareUrl = `${APP_LINK}?post=${image.id}`;
+    const shareUrl = `${getBaseAppUrl()}/?post=${encodeURIComponent(image.id)}`;
     const success = await copyToClipboard(shareUrl);
     if (success) {
-      alert("Post link copied to clipboard!");
+      hapticSuccess();
     }
   };
 

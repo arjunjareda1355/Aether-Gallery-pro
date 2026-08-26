@@ -291,10 +291,17 @@ export default React.memo(function Navbar({
             <div ref={userMenuRef} className="relative">
               <button 
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
+                onContextMenu={(e) => {
+                  if (onOpenProfileSwitcher) {
+                    e.preventDefault();
+                    onOpenProfileSwitcher();
+                  }
+                }}
                 className="flex items-center gap-2 p-0.5 rounded-full border border-white/[0.1] hover:border-brand-primary/30 transition-all bg-white/[0.02] shadow-2xl hover:scale-110 active:scale-95 group relative"
+                title="Profile Menu (Right-click to Switch Account)"
               >
                 {user.photoURL ? (
-                  <img src={user.photoURL} alt="Profile" referrerPolicy="no-referrer" className="w-[36px] h-[36px] md:w-[42px] md:h-[42px] rounded-full object-cover" />
+                  <img src={user.photoURL} alt="Profile" referrerPolicy="no-referrer" className="w-[36px] h-[36px] md:w-[42px] md:h-[42px] rounded-full object-cover ring-1 ring-brand-primary/40" />
                 ) : (
                   <div className="w-[36px] h-[36px] md:w-[42px] md:h-[42px] rounded-full bg-white/5 flex items-center justify-center">
                     <User className="w-5 h-5 text-text-dim" />
