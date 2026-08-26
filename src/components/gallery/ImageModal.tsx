@@ -8,6 +8,7 @@ import { Image, User } from '../../types';
 import { shareAsset, APP_LINK, getBaseAppUrl } from '../../utils/shareUtils';
 import CommentSection from './CommentSection';
 import CollectionModal from './CollectionModal';
+import ShareModal from './ShareModal';
 import { db, COLLECTIONS } from '../../lib/firebase';
 import { addDoc, collection, serverTimestamp, deleteDoc, doc, query, where, getDocs, limit, onSnapshot, orderBy } from 'firebase/firestore';
 import { trackActivity } from '../../lib/recommendation';
@@ -89,6 +90,7 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
   };
 
   const [isCollectionsOpen, setIsCollectionsOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   const [reportTypeOpen, setReportTypeOpen] = useState(false);
   const [showUploaderDetails, setShowUploaderDetails] = useState(false);
   const [isDetailsExpanded, setIsDetailsExpanded] = useState(false);
@@ -586,16 +588,13 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
   };
 
 
-  const handleShare = async () => {
+  const handleShare = () => {
     if (isProtected) {
       alert("Aether Protocol: Sharing restricted for premium assets. Please upgrade to Divine Curator status.");
       return;
     }
-
-    const res = await shareAsset(image, user);
-    if (res.method === 'clipboard') {
-      alert(res.message);
-    }
+    hapticSelection();
+    setIsShareOpen(true);
   };
 
   const handleCopyLink = async () => {
@@ -1496,6 +1495,7 @@ export default function ImageModal({ image, onClose, onLike, onSave, hasLiked, i
       </AnimatePresence>
 
       {isCollectionsOpen && <CollectionModal imageId={image.id} user={user} onClose={() => setIsCollectionsOpen(false)} />}
+      <ShareModal image={image} isOpen={isShareOpen} onClose={() => setIsShareOpen(false)} user={user} />
     </AnimatePresence>
   );
 }

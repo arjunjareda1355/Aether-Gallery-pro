@@ -5,6 +5,7 @@ import { cn, copyToClipboard } from '../../lib/utils';
 import { Image, User } from '../../types';
 import { trackActivity } from '../../lib/recommendation';
 import { shareAsset } from '../../utils/shareUtils';
+import ShareModal from './ShareModal';
 
 interface ImageCardProps {
   image: Image;
@@ -86,6 +87,7 @@ export default React.memo(function ImageCard({
 }: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [bubbles, setBubbles] = useState<{ id: string, x: number, y: number }[]>([]);
   const [showHeartPop, setShowHeartPop] = useState(false);
   const [lastTap, setLastTap] = useState(0);
@@ -390,7 +392,12 @@ export default React.memo(function ImageCard({
       return;
     }
     
-    await shareAsset(image, user);
+    // If native share is supported, use rich shareAsset with attached media file
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      await shareAsset(image, user);
+    } else {
+      setIsShareModalOpen(true);
+    }
   };
 
   const handleDownload = async (e: React.MouseEvent) => {
@@ -528,47 +535,50 @@ export default React.memo(function ImageCard({
         {isSelectMode && (
           <div className="absolute top-3 left-3 z-[41] pointer-events-none select-none">
             {isSelected ? (
-              <div className="w-6 h-6 rounded-full bg-brand-primary flex items-center justify-center border border-black/20 text-bg-dark shadow-[0_2px_8px_rgba(0,0,0,0.4)] animate-in zoom-in duration-200">
-                <Check className="w-3.5 h-3.5 stroke-[4]" />
+              <div className="w-8 h-8 rounded-full bg-brand-primary flex items-center justify-center border-2 border-black/30 text-bg-dark shadow-[0_4px_16px_rgba(0,0,0,0.6)] animate-in zoom-in-75 duration-200">
+                <Check className="w-4.5 h-4.5 stroke-[3.5]" />
               </div>
             ) : (
-              <div className="w-6 h-6 rounded-full border-2 border-white/60 bg-black/40 backdrop-blur-[2px] transition-all hover:border-white shadow-[0_2px_8px_rgba(0,0,0,0.4)]" />
+              <div className="w-8 h-8 rounded-full border-2 border-white/80 bg-black/60 backdrop-blur-md transition-all shadow-[0_4px_12px_rgba(0,0,0,0.5)] group-hover:border-brand-primary group-hover:scale-105" />
             )}
           </div>
         )}
 
         {holdProgress > 0 && holdProgress < 100 && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center z-30 transition-all duration-150">
-            <div className="relative w-14 h-14 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center z-30 transition-all duration-150">
+            <div className="relative w-20 h-20 flex items-center justify-center">
               <svg className="absolute w-full h-full transform -rotate-90">
                 <circle
-                  cx="28"
-                  cy="28"
-                  r="24"
-                  stroke="rgba(255, 255, 255, 0.1)"
-                  strokeWidth="3"
+                  cx="40"
+                  cy="40"
+                  r="34"
+                  stroke="rgba(255, 255, 255, 0.15)"
+                  strokeWidth="3.5"
                   fill="transparent"
                 />
                 <circle
-                  cx="28"
-                  cy="28"
-                  r="24"
+                  cx="40"
+                  cy="40"
+                  r="34"
                   stroke="var(--color-brand-primary, #ffd700)"
-                  strokeWidth="3"
+                  strokeWidth="4"
                   fill="transparent"
-                  strokeDasharray={`${2 * Math.PI * 24}`}
-                  strokeDashoffset={`${2 * Math.PI * 24 * (1 - holdProgress / 100)}`}
+                  strokeLinecap="round"
+                  strokeDasharray={`${2 * Math.PI * 34}`}
+                  strokeDashoffset={`${2 * Math.PI * 34 * (1 - holdProgress / 100)}`}
                 />
               </svg>
               {user?.isAdmin && !isSelectMode ? (
-                <Check className="w-4 h-4 text-white animate-pulse" />
+                <Check className="w-7 h-7 text-brand-primary animate-pulse stroke-[3]" />
               ) : (
-                <Play className="w-4 h-4 fill-current text-white animate-pulse" />
+                <Play className="w-7 h-7 fill-current text-brand-primary animate-pulse" />
               )}
             </div>
-            <span className="text-[8px] font-black uppercase tracking-[0.2em] text-white/90 mt-3 selection:bg-transparent">
-              {user?.isAdmin && !isSelectMode ? 'Hold to Select...' : 'Hold to Preview...'}
-            </span>
+            <div className="px-3.5 py-1.5 rounded-full bg-black/80 border border-white/20 backdrop-blur-md shadow-2xl mt-4">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white">
+                {user?.isAdmin && !isSelectMode ? 'Hold to Select...' : 'Hold to Preview...'}
+              </span>
+            </div>
           </div>
         )}
  
@@ -768,6 +778,13 @@ export default React.memo(function ImageCard({
           </button>
         </div>
       </div>
+
+      <ShareModal 
+        image={image} 
+        isOpen={isShareModalOpen} 
+        onClose={() => setIsShareModalOpen(false)} 
+        user={user} 
+      />
     </motion.div>
   );
 });

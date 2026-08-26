@@ -171,30 +171,30 @@ export default function SelectionToolbar({
         animate={{ opacity: 1, y: 0, x: "-50%", scale: 1 }}
         exit={{ opacity: 0, y: 40, x: "-50%", scale: 0.95 }}
         transition={{ type: "spring", stiffness: 400, damping: 30 }}
-        className="fixed bottom-6 left-1/2 z-[100] max-w-[94vw] w-auto select-none"
+        className="fixed bottom-6 left-1/2 z-[100] max-w-[96vw] w-auto select-none"
       >
-        <div className="flex flex-wrap items-center gap-2 md:gap-3 bg-bg-dark/90 backdrop-blur-2xl border border-white/15 px-3.5 py-2.5 md:px-5 md:py-3 rounded-full shadow-[0_20px_50px_rgba(0,0,0,0.8)] text-white">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 bg-[#0d0d12]/95 backdrop-blur-2xl border border-white/20 px-3.5 py-2.5 md:px-5 md:py-3 rounded-2xl md:rounded-full shadow-[0_25px_60px_rgba(0,0,0,0.9),0_0_30px_rgba(255,255,255,0.05)] text-white">
           
           {/* Selected Count & Toggle All */}
-          <div className="flex items-center gap-2 pr-1 md:pr-2 border-r border-white/10">
+          <div className="flex items-center gap-2 pr-2 md:pr-3 border-r border-white/15">
             <button
               onClick={onToggleSelectAll}
               className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer",
+                "flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-bold transition-all cursor-pointer",
                 isAllSelected 
-                  ? "bg-brand-primary text-bg-dark shadow-[0_0_12px_rgba(var(--color-brand-primary-rgb),0.4)]" 
-                  : "bg-white/10 hover:bg-white/15 text-white/90"
+                  ? "bg-brand-primary text-bg-dark shadow-[0_0_16px_rgba(var(--color-brand-primary-rgb),0.5)] scale-[1.02]" 
+                  : "bg-white/10 hover:bg-white/15 text-white"
               )}
               title={isAllSelected ? "Deselect all visible items" : "Select all visible items (Ctrl+A)"}
             >
               <div className={cn(
-                "w-3.5 h-3.5 rounded-full flex items-center justify-center border",
-                isAllSelected ? "bg-bg-dark border-bg-dark text-brand-primary" : "border-white/40"
+                "w-4.5 h-4.5 rounded-full flex items-center justify-center border transition-all",
+                isAllSelected ? "bg-bg-dark border-bg-dark text-brand-primary" : "border-white/50 bg-black/40"
               )}>
-                {isAllSelected && <Check className="w-2.5 h-2.5 stroke-[4]" />}
+                {isAllSelected && <Check className="w-3 h-3 stroke-[3.5]" />}
               </div>
-              <span className="font-mono">{selectedCount}</span>
-              <span className="hidden sm:inline text-[10px] font-medium text-white/70">
+              <span className="font-mono text-sm">{selectedCount}</span>
+              <span className="hidden sm:inline text-xs font-medium text-white/70">
                 / {totalVisiblePosts}
               </span>
             </button>
@@ -202,7 +202,7 @@ export default function SelectionToolbar({
             {selectedCount > 0 && (
               <button
                 onClick={onClearSelection}
-                className="text-[10px] text-white/40 hover:text-white/80 transition-colors uppercase tracking-wider font-semibold px-1"
+                className="text-[11px] text-white/50 hover:text-white transition-colors uppercase tracking-wider font-bold px-2 py-1 rounded-md hover:bg-white/10"
                 title="Clear selection"
               >
                 Clear
@@ -211,20 +211,20 @@ export default function SelectionToolbar({
           </div>
 
           {/* Quick Action Buttons (Enabled when > 0 items selected) */}
-          <div className="flex items-center gap-1 md:gap-1.5">
+          <div className="flex items-center gap-1.5 md:gap-2">
             {/* Category Change */}
             <button
               onClick={() => setActiveModal('category')}
               disabled={selectedCount === 0}
               className={cn(
-                "flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
+                "flex items-center gap-2 px-3 md:px-3.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer",
                 selectedCount > 0
-                  ? "bg-white/5 hover:bg-white/15 text-white border border-white/10 active:scale-95"
+                  ? "bg-white/8 hover:bg-white/20 text-white border border-white/15 active:scale-95 hover:border-brand-primary/40 shadow-sm"
                   : "opacity-40 cursor-not-allowed text-white/40"
               )}
               title="Change Category"
             >
-              <Folder className="w-3.5 h-3.5 text-brand-primary" />
+              <Folder className="w-4.5 h-4.5 text-brand-primary" />
               <span className="hidden md:inline">Category</span>
             </button>
 
@@ -233,14 +233,14 @@ export default function SelectionToolbar({
               onClick={() => setActiveModal('access')}
               disabled={selectedCount === 0}
               className={cn(
-                "flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
+                "flex items-center gap-2 px-3 md:px-3.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer",
                 selectedCount > 0
-                  ? "bg-white/5 hover:bg-white/15 text-white border border-white/10 active:scale-95"
+                  ? "bg-white/8 hover:bg-white/20 text-white border border-white/15 active:scale-95 hover:border-amber-400/40 shadow-sm"
                   : "opacity-40 cursor-not-allowed text-white/40"
               )}
               title="Change Access (Public / Premium)"
             >
-              <Lock className="w-3.5 h-3.5 text-yellow-400" />
+              <Lock className="w-4.5 h-4.5 text-amber-400" />
               <span className="hidden md:inline">Access</span>
             </button>
 
@@ -249,14 +249,14 @@ export default function SelectionToolbar({
               onClick={() => setActiveModal('edit')}
               disabled={selectedCount === 0}
               className={cn(
-                "flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
+                "flex items-center gap-2 px-3 md:px-3.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer",
                 selectedCount > 0
-                  ? "bg-white/5 hover:bg-white/15 text-white border border-white/10 active:scale-95"
+                  ? "bg-white/8 hover:bg-white/20 text-white border border-white/15 active:scale-95 hover:border-cyan-400/40 shadow-sm"
                   : "opacity-40 cursor-not-allowed text-white/40"
               )}
               title="Edit Title & Tags"
             >
-              <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
+              <Edit3 className="w-4.5 h-4.5 text-cyan-400" />
               <span className="hidden md:inline">Edit</span>
             </button>
 
@@ -265,14 +265,14 @@ export default function SelectionToolbar({
               onClick={onBulkShare}
               disabled={selectedCount === 0}
               className={cn(
-                "p-1.5 md:px-3 md:py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+                "p-2 md:px-3.5 md:py-2 rounded-full text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer",
                 selectedCount > 0
-                  ? "bg-white/5 hover:bg-white/15 text-white border border-white/10 active:scale-95"
+                  ? "bg-white/8 hover:bg-white/20 text-white border border-white/15 active:scale-95 hover:border-blue-400/40 shadow-sm"
                   : "opacity-40 cursor-not-allowed text-white/40"
               )}
               title="Share Selected Items"
             >
-              <Share2 className="w-3.5 h-3.5 text-blue-400" />
+              <Share2 className="w-4.5 h-4.5 text-blue-400" />
               <span className="hidden lg:inline">Share</span>
             </button>
 
@@ -281,14 +281,14 @@ export default function SelectionToolbar({
               onClick={onBulkDownload}
               disabled={selectedCount === 0}
               className={cn(
-                "p-1.5 md:px-3 md:py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+                "p-2 md:px-3.5 md:py-2 rounded-full text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer",
                 selectedCount > 0
-                  ? "bg-white/5 hover:bg-white/15 text-white border border-white/10 active:scale-95"
+                  ? "bg-white/8 hover:bg-white/20 text-white border border-white/15 active:scale-95 hover:border-emerald-400/40 shadow-sm"
                   : "opacity-40 cursor-not-allowed text-white/40"
               )}
               title="Download Selected Media"
             >
-              <Download className="w-3.5 h-3.5 text-emerald-400" />
+              <Download className="w-4.5 h-4.5 text-emerald-400" />
               <span className="hidden lg:inline">Download</span>
             </button>
 
@@ -298,28 +298,28 @@ export default function SelectionToolbar({
                 onClick={() => setActiveModal('delete')}
                 disabled={selectedCount === 0}
                 className={cn(
-                  "p-1.5 md:px-3 md:py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer",
+                  "p-2 md:px-3.5 md:py-2 rounded-full text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer",
                   selectedCount > 0
-                    ? "bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/20 active:scale-95"
+                    ? "bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 active:scale-95 shadow-sm"
                     : "opacity-40 cursor-not-allowed text-red-500/30"
                 )}
                 title="Delete Selected Items"
               >
-                <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                <Trash2 className="w-4.5 h-4.5 text-red-400" />
                 <span className="hidden md:inline">Delete</span>
               </button>
             )}
           </div>
 
           {/* Exit / Done button */}
-          <div className="pl-1 md:pl-2 border-l border-white/10">
+          <div className="pl-2 md:pl-3 border-l border-white/15">
             <button
               onClick={onExitSelectMode}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-white/15 hover:bg-white/25 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer border border-white/10"
               title="Exit Selection Mode (Esc)"
             >
-              <X className="w-3.5 h-3.5" />
-              <span className="text-[11px] uppercase tracking-wider">Done</span>
+              <X className="w-4 h-4 stroke-[2.5]" />
+              <span className="text-xs uppercase tracking-wider">Done</span>
             </button>
           </div>
 

@@ -46,6 +46,7 @@ import {
   recordEmailVerifiedInFirestore 
 } from './services/emailVerificationService';
 import { hapticSuccess, useScrollHaptics } from './utils/haptics';
+import { getBaseAppUrl, createMediaFileForSharing } from './utils/shareUtils';
 
 const ADMIN_EMAILS = ['arjunjareda2007@gmail.com', 'arjunjareda1355@gmail.com', 'aethersanctuaryofficial@gmail.com'];
 
@@ -1334,51 +1335,62 @@ function AppContent() {
       return;
     }
     
-    notify("Downloading asset copies for native sharing...", "info");
+    notify("Preparing media assets and direct links for sharing...", "info");
     
     try {
       const filesToShare: File[] = [];
       for (const item of selectedList) {
-        if (!item.url) continue;
         try {
-          const resp = await fetch(item.url);
-          const blob = await resp.blob();
-          const ext = blob.type.split('/')[1] || 'jpg';
-          const file = new File([blob], `${item.title.replace(/\s+/g, '_')}_Aether.${ext}`, { type: blob.type });
-          filesToShare.push(file);
+          const mediaFile = await createMediaFileForSharing(item);
+          if (mediaFile) {
+            filesToShare.push(mediaFile);
+          }
         } catch (fetchErr) {
-          console.warn("Failed fetching blog file, using fallback URL sharing:", fetchErr);
+          console.warn("Failed creating share file for item:", fetchErr);
         }
       }
+
+      const shareText = selectedList.map(item => {
+        const postLink = `${getBaseAppUrl()}/?post=${encodeURIComponent(item.id)}`;
+        return `✨ ${item.title || 'Aether Visual'}\n🔗 ${postLink}`;
+      }).join('\n\n');
       
       if (filesToShare.length > 0 && navigator.canShare && navigator.canShare({ files: filesToShare })) {
-        await navigator.share({
-          files: filesToShare,
-          title: "Aether Sanctum Assets",
-          text: `Shared ${filesToShare.length} image/video asset(s) from Aether Sanctum`
-        });
-        notify("Directly shared files!", "success");
-        handleBulkExit();
-      } else {
-        // Fallback: If cannot share all at once using share APIs, trigger batch downloads!
-        notify("Direct platform sharing limited. Invoking batch file downloads instead.", "info");
-        for (const file of filesToShare) {
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(file);
-          link.download = file.name;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+        try {
+          await navigator.share({
+            files: filesToShare,
+            title: `Aether Visual Collection (${selectedList.length} items)`,
+            text: shareText
+          });
+          notify("Directly shared media assets with links!", "success");
+          handleBulkExit();
+          return;
+        } catch (shareErr: any) {
+          if (shareErr.name === 'AbortError') {
+            notify("Share dismissed.", "info");
+            return;
+          }
         }
-        handleBulkExit();
       }
+
+      // If cannot share multiple files at once via Web Share, copy direct links and trigger downloads
+      await copyToClipboard(shareText);
+      notify("Copied links to clipboard! Triggering asset downloads...", "info");
+      for (const file of filesToShare) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(file);
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      handleBulkExit();
     } catch (err) {
       console.warn("Share flow failed:", err);
-      // Absolute fallback: clipboard copy
       try {
-        const urls = selectedList.map(img => img.url).join("\n");
+        const urls = selectedList.map(img => `${getBaseAppUrl()}/?post=${encodeURIComponent(img.id)}`).join("\n");
         await copyToClipboard(urls);
-        notify("Could not invoke direct sharing. Direct links copied to clipboard instead.", "info");
+        notify("Direct links copied to clipboard.", "info");
         handleBulkExit();
       } catch (clipboardErr) {
         notify("Sharing failed.", "error");
