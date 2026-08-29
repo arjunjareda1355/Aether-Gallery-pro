@@ -15,7 +15,6 @@ import Navbar from './components/layout/Navbar';
 import Logo from './components/layout/Logo';
 import SmartOnboarding from './components/layout/SmartOnboarding';
 import MasonryGrid from './components/gallery/MasonryGrid';
-import CategoryMenu from './components/gallery/CategoryMenu';
 import FilterModal from './components/gallery/FilterModal';
 import ImageModal from './components/gallery/ImageModal';
 import UploadForm from './components/admin/UploadForm';
@@ -1856,25 +1855,7 @@ function AppContent() {
                className="pt-[80px] md:pt-[88px] min-h-screen"
             >
               
-              <main className="pb-20">
-                {/* Clean In-Feed Navigation & Fast Filter Strip */}
-                <div className="px-4 md:px-10 mb-4 max-w-7xl mx-auto">
-                  <CategoryMenu 
-                    categories={categories}
-                    activeCategoryId={activeCategory}
-                    onCategorySelect={setActiveCategory}
-                    sortOrder={sortOrder}
-                    onSortSelect={setSortOrder}
-                    mediaType={mediaType}
-                    onMediaTypeSelect={setMediaType}
-                    aspectRatioFilter={aspectRatioFilter}
-                    onAspectRatioSelect={setAspectRatioFilter}
-                    onOpenFilterModal={() => setFilterModalOpen(true)}
-                    onShuffleFeed={handleShuffleFeed}
-                    isLoggedIn={!!effectiveUser}
-                  />
-                </div>
-
+              <main className="pb-20 pt-2 md:pt-4">
                 {isLoading && images.length === 0 ? (
                   <div className="px-4 md:px-10">
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
